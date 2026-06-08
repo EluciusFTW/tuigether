@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Elmish" Version="5.0.2" />
+    <PackageReference Include="EluciusFTW.SpectreTuff" Version="0.14.5" />
+    <PackageReference Include="FirebaseDatabase.net" Version="5.0.0" />
+    <PackageReference Update="FSharp.Core" Version="10.1.300" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Config.fs" />
+    <Compile Include="Git.fs" />
+    <Compile Include="Session.fs" />
+    <Compile Include="Keylistener.fs" />
+    <Compile Include="Tick.fs" />
+    <Compile Include="Keymap.fs" />
+    <Compile Include="GlobalKeys.fs" />
+    <Compile Include="Firebase.fs" />
+    <Compile Include="Dependencies.fs" />
+    <Compile Include="Log.fs" />
+    <Compile Include="Notes.fs" />
+    <Compile Include="TodoList.fs" />
+    <Compile Include="BreakGame.fs" />
+    <Compile Include="Notification.fs" />
+    <Compile Include="Timer.fs" />
+    <Compile Include="SessionInfo.fs" />
+    <Compile Include="Journey.fs" />
+    <Compile Include="SessionList.fs" />
+    <Compile Include="SessionView.fs" />
+    <Compile Include="Application.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+</Project>
