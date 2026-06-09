@@ -1,15 +1,59 @@
-# SpectreTuff
-_Spectre Tui for F#_ - A thin, opinionated wrapper around [Spectre.Tui](https://github.com/spectreconsole/spectre.tui)
+# Tuigether
+_Make pair-programming seamless_
 
 > [!WARNING]
-> This library, as well as Spectre.Tui is currently under construction and may change at any time.  
+> This TUI is very early stages, experimental and builds upon the very early experimental-stage SpectreTuff.
+> Also, currently a good chunk of the code is vibe-coded during a 24h hackathon. It will be cleaned up in the near future
 
-## Versioning
-We are using [NerdBank.GitVersioning](https://github.com/dotnet/Nerdbank.GitVersioning) and follow the version scheme: `<major>.<minor>.<git-depth>` for out releases.
+## Features
 
-Since this package is a wrapper around _Spectre.Tui_, we will synchronize our major and minor versions with the ones of the Spectre dependency we are wrapping.
+This is a very rough scetch of what the app can do currently.
 
-> <b>Note</b>: In particular, the _third number_ in the version does not have the same meaning as the patches in SemVer. Increments in that number may contain breaking changes, in contrast to patch versions in SemVer.
+### Current features
+- Create / open / join sessions
+- Driver concept, integrated timer
+- Notes (freetext, lists), ToDo Lists
+- System notifications
+- Git Integration: Session Repository and branches, synching between the participants
+
+### Planned features
+- Login / authentication (:D)
+- Project > Session hierarchy
+- Metadata / Connection to ticketing systems
+
++ ... anything we encounter in the daily usage of this app that makes remote pair/mob programming more seamless!
+
+## Installing tuigether
+
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download). The scripts build a
+single-file, framework-dependent executable and copy it onto your `PATH` as `tuigether`.
+
+**Linux / macOS:**
+
+```bash
+src/scripts/install.sh             # installs to ~/.local/bin
+src/scripts/install.sh /custom/dir # or a custom directory
+```
+
+**Windows (PowerShell):**
+
+```powershell
+src\scripts\install.ps1                      # installs to %LOCALAPPDATA%\Programs\tuigether
+src\scripts\install.ps1 -InstallDir C:\tools # or a custom directory
+```
+
+If the chosen directory is not already on your `PATH`, the script prints how to add it.
+
+## tuigether environment variables
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `FIREBASE_URL` | yes | — | Firebase Realtime Database URL the app connects to. |
+| `FIREBASE_SECRET` | yes | — | Firebase auth secret. |
+| `TUIGETHER_USER` | yes | — | Identifier shown to other participants in a session. |
+| `TUIGETHER_AVATAR` | no | random pick | Preferred avatar name; falls back to random if unset or unknown. |
+| `TUIGETHER_LOG_DIR` | no | `./logs` | Directory where daily log files are written. |
+| `TUIGETHER_LOG_RETENTION_DAYS` | no | `14` | Days of log history to keep. Older files are deleted on startup. `0` keeps today only. |
 
 ## License
 Copyright © Guy Buss, Daniel Muckelbauer
