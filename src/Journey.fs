@@ -10,21 +10,21 @@ open SpectreTuff
 open SpectreTuff.Layout
 open SpectreTuff.Widgets
 
-let private creatureByName (name: string) =
-  match String.IsNullOrWhiteSpace(name) with
-  | true -> library.[Random.Shared.Next(library.Length)]
-  | false ->
-    library
-    |> List.tryFind (fun c -> String.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
-    |> Option.defaultWith (fun () -> library.[Random.Shared.Next(library.Length)])
+let private avatarColors = [|
+  Color.Green; Color.Blue; Color.Purple; Color.Aqua
+  Color.Red; Color.Yellow; Color.Orange1; Color.Fuchsia
+  Color.Maroon; Color.SkyBlue1
+|]
 
-let resolveCreature () =
-  creatureByName (Environment.GetEnvironmentVariable("TUIGETHER_AVATAR"))
+let private colorByName (name: string) =
+  match String.IsNullOrWhiteSpace name with
+  | true -> Color.Silver
+  | false -> avatarColors.[abs (name.GetHashCode()) % avatarColors.Length]
 
 let resolveName () =
-  (resolveCreature ()).Name
+  Environment.GetEnvironmentVariable("TUIGETHER_AVATAR") |> Option.ofObj |> Option.defaultValue ""
 
-type User = { Name: string; Creature: Creature }
+type User = { Name: string; Color: Color }
 
 type Persistence = {
   Client: FirebaseClient
@@ -59,7 +59,7 @@ let private upsertUser (userName: string) (presence: Session.UserPresence) (mode
     | true -> model.CurrentUser
     | false -> {
         Name = userName
-        Creature = creatureByName avatarName
+        Color = colorByName avatarName
       }
 
   let users =
@@ -90,11 +90,9 @@ let private removeUser (userName: string) (model: Model) : Model =
     }
 
 let init (client: FirebaseClient) (sessionId: string) (currentUser: string) (avatarName: string) (data: Session.Data) =
-  let myCreature = creatureByName avatarName
-
   let me = {
     Name = currentUser
-    Creature = myCreature
+    Color = colorByName avatarName
   }
 
   {
@@ -105,7 +103,7 @@ let init (client: FirebaseClient) (sessionId: string) (currentUser: string) (ava
       | false ->
         Some {
           Name = data.ActiveDriver
-          Creature = creatureByName data.ActiveDriver
+          Color = colorByName data.ActiveDriver
         }
     CurrentUser = me
     Timer = Timer.init client sessionId
@@ -124,7 +122,7 @@ let private activeDriverCmd (model: Model) (driver: string option) : Cmd<Msg> =
 let private feedTimer (deps: Dependencies) (model: Model) : Timer.Model * Cmd<Msg> =
   let connectedUsers = model.Users |> List.map (fun u -> u.Name)
   let activeDriver = model.ActiveDriver |> Option.map (fun u -> u.Name)
-  let userAvatarMap = model.Users |> List.map (fun u -> u.Name, u.Creature) |> Map.ofList
+  let userAvatarMap = model.Users |> List.map (fun u -> u.Name, u.Color) |> Map.ofList
 
   let timerM, timerCmd =
     Timer.update deps (Timer.SessionUpdated(connectedUsers, activeDriver, userAvatarMap)) model.Timer
@@ -167,7 +165,7 @@ let update (deps: Dependencies) msg model =
 
     let nextDriverName = nextUser |> Option.map (fun u -> u.Name)
     let connectedNames = users |> List.map (fun u -> u.Name)
-    let avatarMap = users |> List.map (fun u -> u.Name, u.Creature) |> Map.ofList
+    let avatarMap = users |> List.map (fun u -> u.Name, u.Color) |> Map.ofList
 
     let m = {
       model with
@@ -198,14 +196,6 @@ let keyMap (_model: Model) : Spectre.Tui.App.IKeyMap =
         Seq.empty
   }
 
-let private avatarColor (creature: Creature) =
-  creature.SmallRows
-  |> List.concat
-  |> List.tryPick (function
-    | Filled c -> Some c
-    | Empty -> None)
-  |> Option.defaultValue Color.Silver
-
 let private journeyLayout =
   layout "journey"
   |> splitVertically [|
@@ -221,7 +211,7 @@ let widget (model: Model) : IWidget =
         let port = getPort context.Viewport journeyLayout
 
         let userLine (user: User) =
-          let color = avatarColor user.Creature
+          let color = user.Color
           let box = Text.styledSpan (Nullable(Style color)) "██"
 
           let isDriver =

@@ -33,7 +33,7 @@ type Model = {
   State: TimerState
   ActiveDriver: string option
   ConnectedUsers: string list
-  UserAvatars: Map<string, Creature>
+  UserAvatars: Map<string, Color>
   TickEpoch: int
   Persistence: Persistence
 }
@@ -52,7 +52,7 @@ type Msg =
   | StartBreak
   | BreakTick
   | BreakFinished
-  | SessionUpdated of string list * string option * Map<string, Creature>
+  | SessionUpdated of string list * string option * Map<string, Color>
   | RemoteStateLoaded of Session.TimerState option
   | StateSaved
 
@@ -87,7 +87,7 @@ let init (client: FirebaseClient) (sessionId: string) = {
   }
 }
 
-let resetForDriver (previous: Model) (driver: string option) (users: string list) (avatars: Map<string, Creature>) = {
+let resetForDriver (previous: Model) (driver: string option) (users: string list) (avatars: Map<string, Color>) = {
   Remaining = workDuration
   Phase = Work
   State = Idle
@@ -302,24 +302,19 @@ let private emptyBlock = Text.span "  "
 // 4 rows here (journey height 7, minus box border and the panel keys strip), so
 // glyph + timer line fill it exactly. Leading empty cell aligns with the "  " margin.
 
-let private pauseRows =
-  let e = Empty
-  let P = Filled Color.DeepSkyBlue1
+let private pauseLines =
+  let e = emptyBlock
+  let P = styledBlock Color.DeepSkyBlue1
 
-  [ [ e; P; P; e; P; P ]; [ e; P; P; e; P; P ]; [ e; P; P; e; P; P ] ]
+  [ Text.line [ e; P; P; e; P; P ]
+    Text.line [ e; P; P; e; P; P ]
+    Text.line [ e; P; P; e; P; P ] ]
 
 let widget (model: Model) : IWidget =
   { new IWidget with
       member _.Render(context: RenderContext) =
-        let renderCell cell =
-          match cell with
-          | Empty -> emptyBlock
-          | Filled color -> styledBlock color
-
         match model.State with
         | Breaking _ ->
-          let pauseLines = pauseRows |> List.map (fun row -> row |> List.map renderCell |> Text.line)
-
           let infoLine = Text.line [ Text.span (sprintf "  BREAK  %s" (formatTime model.Remaining)) ]
 
           context.Render(paragraph (pauseLines @ [ infoLine ]), context.Viewport)
@@ -330,13 +325,6 @@ let widget (model: Model) : IWidget =
           let driverColor =
             model.ActiveDriver
             |> Option.bind (fun u -> model.UserAvatars |> Map.tryFind u)
-            |> Option.map (fun creature ->
-              creature.SmallRows
-              |> List.concat
-              |> List.tryPick (function
-                | Filled c -> Some c
-                | Empty -> None)
-              |> Option.defaultValue Color.Silver)
 
           let filledColor =
             match model.State with
