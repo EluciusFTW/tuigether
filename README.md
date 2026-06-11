@@ -1,9 +1,10 @@
-# Tuigether
+# tuigether
 _Make pair-programming seamless_
 
 > [!WARNING]
-> This TUI is very early stages, experimental and builds upon the very early experimental-stage SpectreTuff.
+> This TUI is very early stages, experimental and builds upon the very early experimental-stage [SpectreTuff](https://github.com/EluciusFTW/SpectreTuff), which builds upon [Spectre.Tui](https://github.com/spectreconsole/spectre.tui), which also still is under construction.
 > Also, currently a good chunk of the code is vibe-coded during a 24h hackathon. It will be cleaned up in the near future
+
 
 ## Features
 
@@ -58,5 +59,5 @@ If the chosen directory is not already on your `PATH`, the script prints how to 
 ## License
 Copyright © Guy Buss, Daniel Muckelbauer
 
-SpectreTuff is provided as-is under the MIT license.
+tuigether is provided as-is under the MIT license.
 See the LICENSE.md file included in the repository.
