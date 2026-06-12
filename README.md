@@ -32,15 +32,15 @@ single-file, framework-dependent executable and copy it onto your `PATH` as `tui
 **Linux / macOS:**
 
 ```bash
-src/scripts/install.sh             # installs to ~/.local/bin
-src/scripts/install.sh /custom/dir # or a custom directory
+./scripts/install.sh             # installs to ~/.local/bin
+./scripts/install.sh /custom/dir # or a custom directory
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-src\scripts\install.ps1                      # installs to %LOCALAPPDATA%\Programs\tuigether
-src\scripts\install.ps1 -InstallDir C:\tools # or a custom directory
+scripts\install.ps1                      # installs to %LOCALAPPDATA%\Programs\tuigether
+scripts\install.ps1 -InstallDir C:\tools # or a custom directory
 ```
 
 If the chosen directory is not already on your `PATH`, the script prints how to add it.
