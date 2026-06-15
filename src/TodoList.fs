@@ -13,11 +13,6 @@ type InputMode =
   | Normal
   | AddingItem of string
 
-type Persistence = {
-  Client: FirebaseClient
-  SessionId: string
-}
-
 // Items carry their Firebase push-ID so toggles and deletes target a stable key
 // and concurrent multi-user edits do not collide.
 type TodoItem = {
@@ -30,7 +25,7 @@ type Model = {
   InputMode: InputMode
   Items: TodoItem list
   SelectedIndex: int
-  Persistence: Persistence
+  Persistence: Firebase.Persistence
 }
 
 type Msg =
@@ -203,12 +198,7 @@ let update msg model =
     | AddingItem text ->
       {
         model with
-            InputMode =
-              AddingItem(
-                match text with
-                | "" -> ""
-                | _ -> text.[.. text.Length - 2]
-              )
+            InputMode = AddingItem(Str.dropLast text)
       },
       []
     | Normal -> model, []

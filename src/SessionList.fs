@@ -119,14 +119,9 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
   | TypeBackspace ->
     match model.InputMode with
     | Naming(text, _) ->
-      let trimmed =
-        match text with
-        | "" -> ""
-        | _ -> text.[.. text.Length - 2]
-
       {
         model with
-            InputMode = Naming(trimmed, None)
+            InputMode = Naming(Str.dropLast text, None)
       },
       [],
       None
@@ -324,7 +319,7 @@ let widget (model: Model) : IWidget =
     match model.Sessions with
     | [] -> ofString "No sessions yet. Press [n] to create one." :> IWidget
     | _ ->
-      let nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+      let nowMs = Clock.nowMs ()
 
       let items =
         model.Sessions

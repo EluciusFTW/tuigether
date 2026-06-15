@@ -8,6 +8,10 @@ open Firebase.Database.Streaming
 
 type Config = { Url: string; Secret: string }
 
+// A Firebase client paired with the session it's scoped to. Held by every per-session
+// component (Timer, Notes, TodoList, DriveLog, Journey) so they can issue writes/reads.
+type Persistence = { Client: FirebaseClient; SessionId: string }
+
 // Events emitted by the global sessions-list stream (used by SessionList).
 type SessionEvent =
   | SessionsLoaded of (string * Session.Data) list
@@ -29,6 +33,23 @@ let createClient (cfg: Config) =
 
 let private formatError (e: exn) =
   sprintf "[%s] %s" (e.GetType().Name) e.Message
+
+// All session widget writes are best-effort fire-and-forget: a dropped write is
+// re-synced on the next change event, so failures are swallowed rather than
+// surfaced. These helpers centralize that pattern (previously a try/with per write).
+let private swallow (work: Async<unit>) : Async<unit> =
+  async {
+    try
+      do! work
+    with _ ->
+      ()
+  }
+
+let private setValue (node: ChildQuery) (value: 'a) : Async<unit> =
+  swallow (node.PutAsync(box value) |> Async.AwaitTask)
+
+let private removeValue (node: ChildQuery) : Async<unit> =
+  swallow (node.DeleteAsync() |> Async.AwaitTask)
 
 // ─── Generic reload-on-change subscription ───────────────────────────────────
 //
@@ -104,6 +125,9 @@ let private subscribeReload<'T>
 
 module Sessions =
 
+  let private sessionNode (client: FirebaseClient) (sessionId: string) =
+    client.Child(sessionsPath).Child(sessionId)
+
   // Load the full sessions list. Like Session.loadData, this re-reads the whole
   // payload so the reload-on-change subscription always sees a consistent snapshot.
   let loadAll (client: FirebaseClient) : Async<(string * Session.Data) list option> =
@@ -149,7 +173,7 @@ module Sessions =
         let data = {
           Session.Data.Title = title
           Session.Data.Goal = ""
-          Session.Data.StartedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+          Session.Data.StartedAt = Clock.nowMs ()
           Session.Data.WorkStartedAt = 0L
           Session.Data.Creator = user
           Session.Data.ActiveDriver = null
@@ -170,117 +194,62 @@ module Sessions =
 
   let setStatus (client: FirebaseClient) (sessionId: string) (status: Session.Status) : Async<unit> =
     async {
-      try
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("Status").PutAsync(Session.Status.toString status :> obj)
-          |> Async.AwaitTask
+      let node = sessionNode client sessionId
+      do! setValue (node.Child "Status") (Session.Status.toString status)
 
-        match status with
-        | Session.Status.Started ->
-          do!
-            client
-              .Child(sessionsPath)
-              .Child(sessionId)
-              .Child("WorkStartedAt")
-              .PutAsync(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() :> obj)
-            |> Async.AwaitTask
-        | _ -> ()
-      with _ ->
-        ()
+      match status with
+      | Session.Status.Started -> do! setValue (node.Child "WorkStartedAt") (Clock.nowMs ())
+      | _ -> ()
     }
 
   let delete (client: FirebaseClient) (sessionId: string) : Async<Result<unit, string>> =
     async {
       try
-        do! client.Child(sessionsPath).Child(sessionId).DeleteAsync() |> Async.AwaitTask
+        do! (sessionNode client sessionId).DeleteAsync() |> Async.AwaitTask
         return Ok()
       with e ->
         return Error e.Message
     }
 
   let setActiveDriver (client: FirebaseClient) (sessionId: string) (user: string option) : Async<unit> =
-    async {
-      match user with
-      | Some u ->
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("ActiveDriver").PutAsync(u :> obj)
-          |> Async.AwaitTask
-      | None ->
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("ActiveDriver").DeleteAsync()
-          |> Async.AwaitTask
-    }
+    let node = (sessionNode client sessionId).Child "ActiveDriver"
+
+    match user with
+    | Some u -> setValue node u
+    | None -> removeValue node
 
   let saveWipPush (client: FirebaseClient) (sessionId: string) (user: string) (timestamp: int64) : Async<unit> =
     async {
-      try
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("LastWipPushBy").PutAsync(user :> obj)
-          |> Async.AwaitTask
-
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("LastWipPushAt").PutAsync(timestamp :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
+      let node = sessionNode client sessionId
+      do! setValue (node.Child "LastWipPushBy") user
+      do! setValue (node.Child "LastWipPushAt") timestamp
     }
 
   let saveGitBranch (client: FirebaseClient) (sessionId: string) (branch: string) : Async<unit> =
-    async {
-      try
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("GitBranch").PutAsync(branch :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
-    }
+    setValue ((sessionNode client sessionId).Child "GitBranch") branch
 
   let saveGoal (client: FirebaseClient) (sessionId: string) (text: string) : Async<unit> =
-    async {
-      try
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("Goal").PutAsync(text :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
-    }
+    setValue ((sessionNode client sessionId).Child "Goal") text
 
   let saveGoalLock (client: FirebaseClient) (sessionId: string) (owner: string) (lockedAt: int64) : Async<unit> =
     async {
-      try
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("GoalLockOwner").PutAsync(owner :> obj)
-          |> Async.AwaitTask
-
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("GoalLockedAt").PutAsync(lockedAt :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
+      let node = sessionNode client sessionId
+      do! setValue (node.Child "GoalLockOwner") owner
+      do! setValue (node.Child "GoalLockedAt") lockedAt
     }
 
   let releaseGoalLock (client: FirebaseClient) (sessionId: string) : Async<unit> =
     async {
-      try
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("GoalLockOwner").DeleteAsync()
-          |> Async.AwaitTask
-
-        do!
-          client.Child(sessionsPath).Child(sessionId).Child("GoalLockedAt").DeleteAsync()
-          |> Async.AwaitTask
-      with _ ->
-        ()
+      let node = sessionNode client sessionId
+      do! removeValue (node.Child "GoalLockOwner")
+      do! removeValue (node.Child "GoalLockedAt")
     }
-
-  let private sessionDataPath (client: FirebaseClient) (sessionId: string) =
-    client.Child(sessionsPath).Child(sessionId)
 
   let loadData (client: FirebaseClient) (sessionId: string) : Async<Session.Data option> =
     async {
       try
         let! result =
-          (sessionDataPath client sessionId).OnceSingleAsync<Session.Data>()
+          (sessionNode client sessionId).OnceSingleAsync<Session.Data>()
           |> Async.AwaitTask
 
         return
@@ -295,7 +264,7 @@ module Sessions =
     [ "session-data"; sessionId ],
     fun dispatch ->
       subscribeReload
-        (sessionDataPath client sessionId)
+        (sessionNode client sessionId)
         (fun () -> loadData client sessionId)
         (wrap >> dispatch)
         (fun _ -> ())
@@ -404,16 +373,12 @@ module Users =
     (avatarName: string)
     (moodName: string)
     : Async<unit> =
-    async {
-      let presence = {
-        Session.UserPresence.Avatar = avatarName
-        Session.UserPresence.Mood = moodName
-      }
-
-      do!
-        (connectedUsersPath client sessionId).Child(user).PutAsync(presence :> obj)
-        |> Async.AwaitTask
+    let presence = {
+      Session.UserPresence.Avatar = avatarName
+      Session.UserPresence.Mood = moodName
     }
+
+    setValue ((connectedUsersPath client sessionId).Child user) presence
 
 // ─── Push IDs ────────────────────────────────────────────────────────────────
 //
@@ -432,7 +397,7 @@ module PushId =
 
   let generate () =
     lock syncLock (fun () ->
-      let timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+      let timestamp = Clock.nowMs ()
       let duplicateTime = timestamp = lastPushTime
       lastPushTime <- timestamp
 
@@ -467,67 +432,29 @@ module Notes =
     client.Child(sessionsPath).Child(sessionId).Child("widgetState").Child("notes")
 
   let saveFreetext (client: FirebaseClient) (sessionId: string) (text: string) : Async<unit> =
-    async {
-      try
-        do!
-          (notesPath client sessionId).Child("FreetextContent").PutAsync(text :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
-    }
+    setValue ((notesPath client sessionId).Child "FreetextContent") text
 
   let saveNoteMode (client: FirebaseClient) (sessionId: string) (mode: string) : Async<unit> =
-    async {
-      try
-        do!
-          (notesPath client sessionId).Child("NoteMode").PutAsync(mode :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
-    }
+    setValue ((notesPath client sessionId).Child "NoteMode") mode
 
   let addItem (client: FirebaseClient) (sessionId: string) (itemId: string) (text: string) : Async<unit> =
-    async {
-      try
-        do!
-          (notesPath client sessionId).Child("ListItems").Child(itemId).PutAsync(text :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
-    }
+    setValue ((notesPath client sessionId).Child("ListItems").Child itemId) text
 
   let deleteItem (client: FirebaseClient) (sessionId: string) (itemId: string) : Async<unit> =
-    async {
-      try
-        do!
-          (notesPath client sessionId).Child("ListItems").Child(itemId).DeleteAsync()
-          |> Async.AwaitTask
-      with _ ->
-        ()
-    }
+    removeValue ((notesPath client sessionId).Child("ListItems").Child itemId)
 
   let saveLock (client: FirebaseClient) (sessionId: string) (owner: string) (lockedAt: int64) : Async<unit> =
     async {
-      try
-        do!
-          (notesPath client sessionId).Child("LockOwner").PutAsync(owner :> obj)
-          |> Async.AwaitTask
-
-        do!
-          (notesPath client sessionId).Child("LockedAt").PutAsync(lockedAt :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
+      let node = notesPath client sessionId
+      do! setValue (node.Child "LockOwner") owner
+      do! setValue (node.Child "LockedAt") lockedAt
     }
 
   let releaseLock (client: FirebaseClient) (sessionId: string) : Async<unit> =
     async {
-      try
-        do! (notesPath client sessionId).Child("LockOwner").DeleteAsync() |> Async.AwaitTask
-
-        do! (notesPath client sessionId).Child("LockedAt").DeleteAsync() |> Async.AwaitTask
-      with _ ->
-        ()
+      let node = notesPath client sessionId
+      do! removeValue (node.Child "LockOwner")
+      do! removeValue (node.Child "LockedAt")
     }
 
   let private loadField<'T> (client: FirebaseClient) (sessionId: string) (key: string) : Async<'T> =
@@ -578,18 +505,14 @@ module Todo =
   let private todoPath (client: FirebaseClient) (sessionId: string) =
     client.Child(sessionsPath).Child(sessionId).Child("widgetState").Child("todo")
 
+  let private itemNode (client: FirebaseClient) (sessionId: string) (itemId: string) =
+    (todoPath client sessionId).Child("Items").Child itemId
+
   let addItem (client: FirebaseClient) (sessionId: string) (itemId: string) (text: string) : Async<unit> =
     async {
-      try
-        do!
-          (todoPath client sessionId).Child("Items").Child(itemId).Child("Text").PutAsync(text :> obj)
-          |> Async.AwaitTask
-
-        do!
-          (todoPath client sessionId).Child("Items").Child(itemId).Child("Completed").PutAsync(false :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
+      let node = itemNode client sessionId itemId
+      do! setValue (node.Child "Text") text
+      do! setValue (node.Child "Completed") false
     }
 
   let setItem
@@ -600,37 +523,16 @@ module Todo =
     (completed: bool)
     : Async<unit> =
     async {
-      try
-        do!
-          (todoPath client sessionId).Child("Items").Child(itemId).Child("Text").PutAsync(text :> obj)
-          |> Async.AwaitTask
-
-        do!
-          (todoPath client sessionId).Child("Items").Child(itemId).Child("Completed").PutAsync(completed :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
+      let node = itemNode client sessionId itemId
+      do! setValue (node.Child "Text") text
+      do! setValue (node.Child "Completed") completed
     }
 
   let setCompleted (client: FirebaseClient) (sessionId: string) (itemId: string) (completed: bool) : Async<unit> =
-    async {
-      try
-        do!
-          (todoPath client sessionId).Child("Items").Child(itemId).Child("Completed").PutAsync(completed :> obj)
-          |> Async.AwaitTask
-      with _ ->
-        ()
-    }
+    setValue ((itemNode client sessionId itemId).Child "Completed") completed
 
   let deleteItem (client: FirebaseClient) (sessionId: string) (itemId: string) : Async<unit> =
-    async {
-      try
-        do!
-          (todoPath client sessionId).Child("Items").Child(itemId).DeleteAsync()
-          |> Async.AwaitTask
-      with _ ->
-        ()
-    }
+    removeValue (itemNode client sessionId itemId)
 
   let load (client: FirebaseClient) (sessionId: string) : Async<Session.TodoState option> =
     async {
@@ -660,12 +562,7 @@ module Timer =
     client.Child(sessionsPath).Child(sessionId).Child("widgetState").Child("timer")
 
   let save (client: FirebaseClient) (sessionId: string) (state: Session.TimerState) : Async<unit> =
-    async {
-      try
-        do! (timerPath client sessionId).PutAsync(state :> obj) |> Async.AwaitTask
-      with _ ->
-        ()
-    }
+    setValue (timerPath client sessionId) state
 
   let load (client: FirebaseClient) (sessionId: string) : Async<Session.TimerState option> =
     async {
@@ -699,7 +596,7 @@ module Timer =
 
         match state with
         | Some s when s.IsRunning ->
-          let now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+          let now = Clock.nowMs ()
           let remainingSeconds = max 0 (int ((s.EndsAt - now) / 1000L))
 
           do!
@@ -725,13 +622,7 @@ module History =
   // Append-only: PostAsync mints a chronological push key per event, so the log
   // preserves order and never overwrites prior entries.
   let append (client: FirebaseClient) (sessionId: string) (event: Session.DriveEvent) : Async<unit> =
-    async {
-      try
-        let! _ = (historyPath client sessionId).PostAsync(event :> obj) |> Async.AwaitTask
-        return ()
-      with _ ->
-        return ()
-    }
+    swallow ((historyPath client sessionId).PostAsync(box event) |> Async.AwaitTask |> Async.Ignore)
 
   // The whole log is a dictionary of pushKey -> event; push keys sort chronologically.
   let load

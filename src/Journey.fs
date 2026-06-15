@@ -26,17 +26,12 @@ let resolveName () =
 
 type User = { Name: string; Color: Color }
 
-type Persistence = {
-  Client: FirebaseClient
-  SessionId: string
-}
-
 type Model = {
   Users: User list
   ActiveDriver: User option
   CurrentUser: User
   Timer: Timer.Model
-  Persistence: Persistence
+  Persistence: Firebase.Persistence
 }
 
 type Msg =
@@ -129,7 +124,7 @@ let private logDriveCmd (model: Model) (eventType: Session.DriveEventType) (driv
         Session.DriveEvent.Type = Session.DriveEventType.toString eventType
         Session.DriveEvent.Driver = driver
         Session.DriveEvent.By = model.CurrentUser.Name
-        Session.DriveEvent.At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        Session.DriveEvent.At = Clock.nowMs ()
       })
     ()
     (fun () -> DriveLogged)
@@ -214,16 +209,12 @@ let update (deps: Dependencies) msg model =
     let m, cmd = Timer.update deps tMsg model.Timer
     { model with Timer = m }, Cmd.map TimerMsg cmd
 
-let private subMap (wrap: 'a -> 'b) (subs: (string list * (Dispatch<'a> -> IDisposable)) list) =
-  subs
-  |> List.map (fun (key, start) -> key, (fun (dispatch: Dispatch<'b>) -> start (wrap >> dispatch)))
-
 let subscriptions (model: Model) =
   (Firebase.Users.subscription model.Persistence.Client model.Persistence.SessionId "journey" (fun ev ->
     match ev with
     | Firebase.UserChanged(user, presence) -> RemoteUserChanged(user, presence)
     | Firebase.UserRemoved user -> RemoteUserRemoved user))
-  @ (Timer.subscriptions model.Timer |> subMap TimerMsg)
+  @ (Timer.subscriptions model.Timer |> Subs.map TimerMsg)
 
 let keyMap (_model: Model) : Spectre.Tui.App.IKeyMap =
   { new Spectre.Tui.App.IKeyMap with

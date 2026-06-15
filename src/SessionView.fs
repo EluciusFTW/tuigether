@@ -148,15 +148,11 @@ let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
     None
   | UpdateSession None -> model, [], None
 
-let private subMap (wrap: 'a -> 'b) (subs: (string list * (Dispatch<'a> -> IDisposable)) list) =
-  subs
-  |> List.map (fun (key, start) -> key, (fun (dispatch: Dispatch<'b>) -> start (wrap >> dispatch)))
-
 let subscriptions (model: Model) =
-  (Notes.subscriptions model.Notes |> subMap NotesMsg)
-  @ (TodoList.subscriptions model.TodoList |> subMap TodoListMsg)
-  @ (Journey.subscriptions model.Journey |> subMap JourneyMsg)
-  @ (DriveLog.subscriptions model.DriveLog |> subMap DriveLogMsg)
+  (Notes.subscriptions model.Notes |> Subs.map NotesMsg)
+  @ (TodoList.subscriptions model.TodoList |> Subs.map TodoListMsg)
+  @ (Journey.subscriptions model.Journey |> Subs.map JourneyMsg)
+  @ (DriveLog.subscriptions model.DriveLog |> Subs.map DriveLogMsg)
   @ Firebase.Sessions.dataSubscription model.Client model.SessionId UpdateSession
 
 let private outerBindings: KeyBinding<Model, Msg> list = [

@@ -8,6 +8,7 @@ open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open Keymap
+open Locking
 open SpectreTuff
 open SpectreTuff.Widgets
 
@@ -20,19 +21,9 @@ type InputMode =
   | Insert
   | AddingItem of string
 
-type Persistence = {
-  Client: FirebaseClient
-  SessionId: string
-}
-
 // List items carry their Firebase push-ID so deletes target a stable key and
 // concurrent multi-user edits do not collide.
 type NoteItem = { Id: string; Text: string }
-
-// Freetext editing is single-writer: the user in Insert mode owns the lock and
-// other users cannot enter Insert until it's released. LockedAt is refreshed on
-// every debounced save so a crashed holder's lock expires after lockTtlMs.
-type Lock = { Owner: string; LockedAt: int64 }
 
 type Model = {
   NoteMode: NoteMode
@@ -42,9 +33,9 @@ type Model = {
   InsertActivityToken: int
   ListItems: NoteItem list
   ListIndex: int
-  Lock: Lock option
+  Lock: Locking.Lock option
   User: string
-  Persistence: Persistence
+  Persistence: Firebase.Persistence
 }
 
 type Msg =
@@ -67,20 +58,9 @@ type Msg =
 
 let private freetextDebounceMs = 300
 let private autoExitInsertMs = 30_000
-let private lockTtlMs = 60_000L
-
-let private nowMs () : int64 =
-  DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-
-let private isLockActive (now: int64) (lock: Lock option) =
-  match lock with
-  | Some l -> now - l.LockedAt <= lockTtlMs
-  | None -> false
 
 let private isLockedByOther (model: Model) =
-  match model.Lock with
-  | Some l when isLockActive (nowMs ()) (Some l) -> l.Owner <> model.User
-  | _ -> false
+  Locking.heldByOther (Clock.nowMs ()) model.User model.Lock
 
 let isHoldingLock (model: Model) =
   match model.InputMode, model.Lock with
@@ -315,7 +295,7 @@ let update msg model =
 
       let lock = {
         Owner = model.User
-        LockedAt = nowMs ()
+        LockedAt = Clock.nowMs ()
       }
 
       let updated = {
@@ -377,12 +357,7 @@ let update msg model =
     | AddingItem text ->
       {
         model with
-            InputMode =
-              AddingItem(
-                match text with
-                | "" -> ""
-                | _ -> text.[.. text.Length - 2]
-              )
+            InputMode = AddingItem(Str.dropLast text)
       },
       []
     | _ ->
@@ -392,10 +367,7 @@ let update msg model =
 
       let updated = {
         model with
-            FreetextContent =
-              match text with
-              | "" -> ""
-              | _ -> text.[.. text.Length - 2]
+            FreetextContent = Str.dropLast text
             FreetextSaveToken = bumped
             InsertActivityToken = activityToken
       }
@@ -550,7 +522,7 @@ let update msg model =
       // stale to other clients while they're actively typing.
       let refreshedLock =
         match model.Lock with
-        | Some l when l.Owner = model.User -> Some { l with LockedAt = nowMs () }
+        | Some l when l.Owner = model.User -> Some { l with LockedAt = Clock.nowMs () }
         | other -> other
 
       let updated = { model with Lock = refreshedLock }
