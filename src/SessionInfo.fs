@@ -26,12 +26,18 @@ type SyncPopupStage =
   | DiscardingLocal
   | SyncFailed of error: string
 
+type MeetingPopupStage =
+  | CreatingMeeting
+  | AwaitingLogin of url: string * code: string
+  | MeetingFailed of error: string
+
 type InputMode =
   | Normal
   | Insert
   | GoalPopup
   | BranchPopup of BranchPopup
   | SyncPopup of SyncPopupStage
+  | MeetingPopup of MeetingPopupStage
 
 // Goal editing is single-writer: the user in Insert mode owns the lock and other
 // users cannot enter Insert until it's released. LockedAt is refreshed on every
@@ -54,6 +60,7 @@ type Model = {
   LocalRepo: string
   SessionTitle: string
   LastSeenWipAt: int64
+  MeetingUrl: string option
 }
 
 type Msg =
@@ -81,6 +88,10 @@ type Msg =
   | DismissSyncPopup
   | MaybeShowGoalPopup
   | CloseGoalPopup
+  | CreateMeeting
+  | MeetingDeviceCode of url: string * code: string
+  | MeetingCreated of Result<string, string>
+  | DismissMeetingPopup
 
 let private goalDebounceMs = 300
 let private autoExitInsertMs = 30_000
@@ -121,6 +132,11 @@ let private isRepoOK (model: Model) =
   | _, "" -> true
   | local, session -> local = session
 
+let private meetingUrlFromData (data: Session.Data) =
+  match isNull data.MeetingUrl || data.MeetingUrl = "" with
+  | true -> None
+  | false -> Some data.MeetingUrl
+
 let private lockFromData (data: Session.Data) =
   match isNull data.GoalLockOwner || data.GoalLockOwner = "" with
   | true -> None
@@ -152,6 +168,7 @@ let init (client: FirebaseClient) (sessionId: string) (user: string) (sessionDat
     | true -> ""
     | false -> sessionData.Title
   LastSeenWipAt = sessionData.LastWipPushAt
+  MeetingUrl = meetingUrlFromData sessionData
 }
 
 let private normalBindings: KeyBinding<Model, Msg> list = [
@@ -207,6 +224,16 @@ let private normalBindings: KeyBinding<Model, Msg> list = [
         Description = "WIP sync (unavailable)"
         Message = None
       })
+  KeyBinding.dynamic (CharKey 'm') (fun model ->
+    match model.MeetingUrl with
+    | None -> {
+        Description = "create Teams meeting"
+        Message = Some CreateMeeting
+      }
+    | Some _ -> {
+        Description = "Teams meeting created"
+        Message = None
+      })
 ]
 
 let private insertModeBindings: KeyBinding<Model, Msg> list = [
@@ -239,6 +266,10 @@ let private goalPopupBindings: KeyBinding<Model, Msg> list = [
   KeyBinding.createSpecial ConsoleKey.Escape "dismiss" CloseGoalPopup
 ]
 
+let private meetingPopupBindings: KeyBinding<Model, Msg> list = [
+  KeyBinding.createSpecial ConsoleKey.Escape "dismiss" DismissMeetingPopup
+]
+
 let private emptyBindings: KeyBinding<Model, Msg> list = []
 
 let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
@@ -256,6 +287,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | 'b' when isRepoOK model -> Some BeginCreateBranch
     | 'S' when isRepoOK model -> Some BeginSync
     | 'w' when isRepoOK model && model.LocalGitBranch = model.GitBranch -> Some BeginWipSync
+    | 'm' when model.MeetingUrl.IsNone -> Some CreateMeeting
     | _ -> None
   | GoalPopup ->
     match key.Key with
@@ -292,6 +324,12 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | ConsoleKey.Enter
     | ConsoleKey.Escape -> Some DismissSyncPopup
     | _ -> None
+  | MeetingPopup CreatingMeeting -> None
+  | MeetingPopup(AwaitingLogin _)
+  | MeetingPopup(MeetingFailed _) ->
+    match key.Key with
+    | ConsoleKey.Escape -> Some DismissMeetingPopup
+    | _ -> None
 
 let capturesInput (model: Model) =
   match model.InputMode with
@@ -311,6 +349,9 @@ let keyMap (model: Model) =
     | SyncPopup DiscardingLocal -> emptyBindings
     | SyncPopup(SyncDiverged _) -> syncDivergedBindings
     | SyncPopup(SyncFailed _) -> syncFailedBindings
+    | MeetingPopup CreatingMeeting -> emptyBindings
+    | MeetingPopup(AwaitingLogin _)
+    | MeetingPopup(MeetingFailed _) -> meetingPopupBindings
 
   KeyBinding.toKeyMap bindings model
 
@@ -372,6 +413,29 @@ let private saveWipPushCmd (model: Model) (timestamp: int64) : Cmd<Msg> =
 let private saveGitBranchCmd (model: Model) (branch: string) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> Firebase.Sessions.saveGitBranch model.Client model.SessionId branch) () (fun () ->
     StateSaved)
+
+let private saveMeetingUrlCmd (model: Model) (url: string) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> Firebase.Sessions.saveMeetingUrl model.Client model.SessionId url) () (fun () ->
+    StateSaved)
+
+// Two-stage: the device-code callback dispatches MeetingDeviceCode mid-flight so
+// the popup can show the login prompt, then the final MeetingCreated lands when
+// Graph responds. Needs raw dispatch, so it's an effect rather than OfAsync.
+let private createMeetingCmd (model: Model) : Cmd<Msg> =
+  Cmd.ofEffect (fun dispatch ->
+    let onCode (dc: Teams.DeviceCode) =
+      dispatch (MeetingDeviceCode(dc.VerificationUri, dc.UserCode))
+
+    let subject =
+      match model.SessionTitle with
+      | "" -> "tuigether pairing session"
+      | title -> title
+
+    async {
+      let! result = Teams.createMeeting subject onCode
+      dispatch (MeetingCreated result)
+    }
+    |> Async.Start)
 
 let update msg model =
   match msg with
@@ -512,6 +576,7 @@ let update msg model =
             | true -> ""
             | false -> data.Title
           LastSeenWipAt = data.LastWipPushAt
+          MeetingUrl = meetingUrlFromData data
           InputMode =
             match shouldAutoPull with
             | true -> SyncPopup RunningSync
@@ -732,6 +797,27 @@ let update msg model =
 
       updated, Cmd.batch [ saveGoalCmd updated; releaseGoalLockCmd updated ]
     | _ -> model, []
+  | CreateMeeting ->
+    match model.InputMode, model.MeetingUrl with
+    | Normal, None -> { model with InputMode = MeetingPopup CreatingMeeting }, createMeetingCmd model
+    | _ -> model, []
+  | MeetingDeviceCode(url, code) ->
+    match model.InputMode with
+    | MeetingPopup CreatingMeeting -> { model with InputMode = MeetingPopup(AwaitingLogin(url, code)) }, []
+    | _ -> model, []
+  | MeetingCreated(Ok url) ->
+    let updated = {
+      model with
+          InputMode = Normal
+          MeetingUrl = Some url
+    }
+
+    updated, saveMeetingUrlCmd updated url
+  | MeetingCreated(Error err) -> { model with InputMode = MeetingPopup(MeetingFailed err) }, []
+  | DismissMeetingPopup ->
+    match model.InputMode with
+    | MeetingPopup _ -> { model with InputMode = Normal }, []
+    | _ -> model, []
 
 let subscriptions (_model: Model) = []
 
@@ -744,6 +830,7 @@ let private infoLayout =
     layout "repo" |> withFixedSize (Some 1)
     layout "branch" |> withFixedSize (Some 1)
     layout "started" |> withFixedSize (Some 1)
+    layout "meeting" |> withFixedSize (Some 1)
   |]
 
 let private popupInnerLayout =
@@ -826,6 +913,29 @@ let private renderSyncPopup (stage: SyncPopupStage) (target: string) : IWidget =
   |> withInnerWidget body
   :> IWidget
 
+let private renderMeetingPopup (stage: MeetingPopupStage) : IWidget =
+  let body: IWidget =
+    match stage with
+    | CreatingMeeting -> ofString "  Creating Teams meeting…" :> IWidget
+    | AwaitingLogin(url, code) ->
+      paragraph [
+        Text.line [ Text.styledSpan (Nullable(Style Color.Green)) (sprintf "  Sign in at %s" url) ]
+        Text.line [ Text.styledSpan (Nullable(Style Color.Green)) (sprintf "  and enter code: %s" code) ]
+      ]
+      :> IWidget
+    | MeetingFailed err -> paragraph [ Text.line [ Text.styledSpan (Nullable(Style Color.Red)) err ] ] :> IWidget
+
+  let frameColor =
+    match stage with
+    | MeetingFailed _ -> Color.Red
+    | CreatingMeeting
+    | AwaitingLogin _ -> Color.Green
+
+  box (Look.fromColor frameColor)
+  |> withTitle "Teams meeting"
+  |> withInnerWidget body
+  :> IWidget
+
 let widget (model: Model) : IWidget =
   { new IWidget with
       member _.Render(ctx) =
@@ -869,12 +979,20 @@ let widget (model: Model) : IWidget =
         let startedAt = DateTimeOffset.FromUnixTimeMilliseconds(model.StartedAt).ToString("yyyy-MM-dd HH:mm:ss")
         ctx.Render(ofString (sprintf "  Started: %s" startedAt) :> IWidget, port "started")
 
+        let meetingLine =
+          match model.MeetingUrl with
+          | Some url -> sprintf "  Meeting: [link=%s]Join Teams meeting[/]" url
+          | None -> ""
+
+        ctx.Render(ofMarkup meetingLine :> IWidget, port "meeting")
+
         match model.InputMode with
         | BranchPopup branchState ->
           ctx.Render(popup 60 6 |> withPopupContent (renderBranchPopup branchState) :> IWidget)
         | SyncPopup stage ->
           ctx.Render(popup 60 5 |> withPopupContent (renderSyncPopup stage model.GitBranch) :> IWidget)
         | GoalPopup -> ctx.Render(popup 60 5 |> withPopupContent (renderGoalPopup model.GoalContent) :> IWidget)
+        | MeetingPopup stage -> ctx.Render(popup 70 6 |> withPopupContent (renderMeetingPopup stage) :> IWidget)
         | Normal
         | Insert -> ()
   }

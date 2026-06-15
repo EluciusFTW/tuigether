@@ -39,6 +39,7 @@ type Data = {
   GitRepo: string
   LastWipPushAt: int64
   LastWipPushBy: string
+  MeetingUrl: string
 }
 
 [<CLIMutable>]

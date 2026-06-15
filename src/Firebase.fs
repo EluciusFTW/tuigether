@@ -169,6 +169,7 @@ module Sessions =
           Session.Data.GitRepo = gitRepo
           Session.Data.LastWipPushAt = 0L
           Session.Data.LastWipPushBy = null
+          Session.Data.MeetingUrl = null
         }
 
         let! result = client.Child(sessionsPath).PostAsync(data) |> Async.AwaitTask
@@ -239,6 +240,16 @@ module Sessions =
       try
         do!
           client.Child(sessionsPath).Child(sessionId).Child("GitBranch").PutAsync(branch :> obj)
+          |> Async.AwaitTask
+      with _ ->
+        ()
+    }
+
+  let saveMeetingUrl (client: FirebaseClient) (sessionId: string) (url: string) : Async<unit> =
+    async {
+      try
+        do!
+          client.Child(sessionsPath).Child(sessionId).Child("MeetingUrl").PutAsync(url :> obj)
           |> Async.AwaitTask
       with _ ->
         ()
