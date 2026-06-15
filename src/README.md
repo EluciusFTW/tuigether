@@ -29,8 +29,10 @@ On first run the app creates a template config file at the platform default loca
 ```json
 {
   "firebaseUrl": "https://your-project.firebaseio.com",
-  "firebaseSecret": "your-auth-secret",
-  "tuigetherUser": "your-username"
+  "firebaseApiKey": "your-web-api-key",
+  "firebaseAuthDomain": "your-project.firebaseapp.com",
+  "email": "",
+  "password": ""
 }
 ```
 
@@ -39,11 +41,33 @@ Environment variables override the config file:
 | Variable | Required | Description |
 |---|---|---|
 | `FIREBASE_URL` | yes | Firebase Realtime Database URL |
-| `FIREBASE_SECRET` | yes | Firebase auth secret |
-| `TUIGETHER_USER` | yes | Username shown to other participants |
+| `FIREBASE_API_KEY` | yes | Firebase project Web API key (used for authentication) |
+| `FIREBASE_AUTH_DOMAIN` | yes | Firebase auth domain, e.g. `your-project.firebaseapp.com` |
+| `TUIGETHER_EMAIL` | no | Account email for non-interactive (silent) sign-in |
+| `TUIGETHER_PASSWORD` | no | Account password for non-interactive (silent) sign-in |
 | `TUIGETHER_AVATAR` | no | Preferred avatar name (random if unset or unknown) |
 | `TUIGETHER_LOG_DIR` | no | Directory for daily log files (default: `./logs`) |
 | `TUIGETHER_LOG_RETENTION_DAYS` | no | Days of logs to keep; `0` = today only (default: `14`) |
+
+## Authentication
+
+tuigether authenticates each user against Firebase with an email/password
+account. Accounts are managed in the Firebase console (Authentication → Users);
+there is no in-app sign-up.
+
+- If both `email` and `password` are set (in the config file or via
+  `TUIGETHER_EMAIL` / `TUIGETHER_PASSWORD`), the app signs in silently at
+  startup.
+- Otherwise, an interactive login screen prompts for the email and password.
+
+The username shown to other participants is taken from the account's display
+name (falling back to the email's local-part). The client sends the user's
+Firebase ID token on every request, so the database rules can require
+authentication:
+
+```json
+{ "rules": { ".read": "auth != null", ".write": "auth != null" } }
+```
 
 ## Architecture: Deployment View
 ```

@@ -7,15 +7,20 @@ open System.Text.Json
 [<CLIMutable>]
 type ConfigFile = {
   FirebaseUrl: string
-  FirebaseSecret: string
-  TuigetherUser: string
+  FirebaseApiKey: string
+  FirebaseAuthDomain: string
+  Email: string
+  Password: string
   NotificationsEnabled: Nullable<bool>
 }
 
 type Settings = {
   FirebaseUrl: string
-  FirebaseSecret: string
-  TuigetherUser: string
+  FirebaseApiKey: string
+  FirebaseAuthDomain: string
+  // Optional credentials for silent (non-interactive) sign-in. Both present →
+  // authenticate at startup; otherwise the app shows the interactive login.
+  Credentials: (string * string) option
   NotificationsEnabled: bool
 }
 
@@ -25,8 +30,10 @@ let private configPath () =
 let private templateJson =
   """{
   "firebaseUrl": "",
-  "firebaseSecret": "",
-  "tuigetherUser": "",
+  "firebaseApiKey": "",
+  "firebaseAuthDomain": "",
+  "email": "",
+  "password": "",
   "notificationsEnabled": true
 }
 """
@@ -60,25 +67,34 @@ let load () : Result<Settings, string> =
 
     Error(
       sprintf
-        "Created config template at %s. Fill it in, or set FIREBASE_URL, FIREBASE_SECRET, and TUIGETHER_USER."
+        "Created config template at %s. Fill it in, or set FIREBASE_URL, FIREBASE_API_KEY, and FIREBASE_AUTH_DOMAIN."
         path
     )
   | Some file ->
     let firebaseUrl = resolve "FIREBASE_URL" file.FirebaseUrl
-    let firebaseSecret = resolve "FIREBASE_SECRET" file.FirebaseSecret
-    let tuigetherUser = resolve "TUIGETHER_USER" file.TuigetherUser
+    let firebaseApiKey = resolve "FIREBASE_API_KEY" file.FirebaseApiKey
+    let firebaseAuthDomain = resolve "FIREBASE_AUTH_DOMAIN" file.FirebaseAuthDomain
 
-    match firebaseUrl, firebaseSecret, tuigetherUser with
-    | Some url, Some secret, Some user ->
+    let email = resolve "TUIGETHER_EMAIL" file.Email
+    let password = resolve "TUIGETHER_PASSWORD" file.Password
+
+    let credentials =
+      match email, password with
+      | Some e, Some p -> Some(e, p)
+      | _ -> None
+
+    match firebaseUrl, firebaseApiKey, firebaseAuthDomain with
+    | Some url, Some apiKey, Some authDomain ->
       Ok {
         FirebaseUrl = url
-        FirebaseSecret = secret
-        TuigetherUser = user
+        FirebaseApiKey = apiKey
+        FirebaseAuthDomain = authDomain
+        Credentials = credentials
         NotificationsEnabled = file.NotificationsEnabled |> Option.ofNullable |> Option.defaultValue true
       }
     | _ ->
       Error(
         sprintf
-          "Missing required config. Set values in %s or as FIREBASE_URL, FIREBASE_SECRET, and TUIGETHER_USER environment variables."
+          "Missing required config. Set values in %s or as FIREBASE_URL, FIREBASE_API_KEY, and FIREBASE_AUTH_DOMAIN environment variables."
           path
       )

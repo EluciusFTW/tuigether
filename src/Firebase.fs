@@ -2,11 +2,10 @@ module Firebase
 
 open System
 open System.Threading.Tasks
+open Firebase.Auth
 open Firebase.Database
 open Firebase.Database.Query
 open Firebase.Database.Streaming
-
-type Config = { Url: string; Secret: string }
 
 // Events emitted by the global sessions-list stream (used by SessionList).
 type SessionEvent =
@@ -22,10 +21,14 @@ type UserEvent =
 
 let private sessionsPath = "sessions"
 
-let createClient (cfg: Config) =
-  let options = FirebaseOptions(AuthTokenAsyncFactory = Func<Task<string>>(fun () -> Task.FromResult cfg.Secret))
+// The database client authenticates with the signed-in user's Firebase ID
+// token. GetIdTokenAsync returns a cached token and refreshes it internally when
+// near expiry, so every request carries a valid token without extra plumbing.
+let createClient (url: string) (user: User) =
+  let options =
+    FirebaseOptions(AuthTokenAsyncFactory = Func<Task<string>>(fun () -> user.GetIdTokenAsync false))
 
-  new FirebaseClient(cfg.Url, options)
+  new FirebaseClient(url, options)
 
 let private formatError (e: exn) =
   sprintf "[%s] %s" (e.GetType().Name) e.Message

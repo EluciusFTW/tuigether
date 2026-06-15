@@ -8,12 +8,14 @@
   <ItemGroup>
     <PackageReference Include="Elmish" Version="5.0.2" />
     <PackageReference Include="EluciusFTW.SpectreTuff" Version="0.14.5" />
+    <PackageReference Include="FirebaseAuthentication.net" Version="4.1.0" />
     <PackageReference Include="FirebaseDatabase.net" Version="5.0.0" />
     <PackageReference Update="FSharp.Core" Version="10.1.300" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="Config.fs" />
+    <Compile Include="Auth.fs" />
     <Compile Include="Git.fs" />
     <Compile Include="Session.fs" />
     <Compile Include="Keylistener.fs" />
@@ -32,6 +34,7 @@
     <Compile Include="Journey.fs" />
     <Compile Include="SessionList.fs" />
     <Compile Include="SessionView.fs" />
+    <Compile Include="Login.fs" />
     <Compile Include="Application.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

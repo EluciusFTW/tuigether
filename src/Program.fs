@@ -6,11 +6,19 @@ match Config.load () with
   eprintfn "%s" message
   exit 1
 | Ok settings ->
-  let client =
-    Firebase.createClient {
-      Url = settings.FirebaseUrl
-      Secret = settings.FirebaseSecret
-    }
+  let authClient = Auth.createClient settings
+
+  // Silent path: when credentials are configured, sign in before touching the
+  // terminal so any failure surfaces on stderr rather than inside the TUI.
+  let preAuthedUser =
+    match settings.Credentials with
+    | Some(email, password) ->
+      match Auth.signIn authClient email password |> Async.RunSynchronously with
+      | Ok user -> Some user
+      | Error message ->
+        eprintfn "Login failed: %s" message
+        exit 1
+    | None -> None
 
   let terminal = Spectre.Tui.Terminal.Create()
   // Work around ConPTY alt-screen sizing bug: exit and re-enter alt-screen
@@ -24,6 +32,22 @@ match Config.load () with
   let renderer = Spectre.Tui.Renderer terminal
   renderer.NoTargetFps()
 
+  // Interactive path: prompt for credentials when none were configured. Quitting
+  // the login screen leaves the alt-screen and exits cleanly.
+  let user =
+    match preAuthedUser with
+    | Some u -> u
+    | None ->
+      match Login.run renderer authClient with
+      | Some u -> u
+      | None ->
+        Console.Write "\x1b[?1049l"
+        Console.Out.Flush()
+        exit 0
+
+  let client = Firebase.createClient settings.FirebaseUrl user
+  let displayName = Auth.identity user
+
   let notify =
     match settings.NotificationsEnabled with
     | true -> Notification.send
@@ -32,8 +56,8 @@ match Config.load () with
   let deps: Dependencies = { Client = client; Notify = notify }
 
   Elmish.Program.mkProgram
-    (Application.init client settings.TuigetherUser)
-    (Application.update deps settings.TuigetherUser)
+    (Application.init client displayName)
+    (Application.update deps displayName)
     (Application.view renderer)
   |> Elmish.Program.withSubscription (fun model ->
     Input.subscription Application.InputMsg model
