@@ -104,46 +104,37 @@ let private subscribeReload<'T>
 
 module Sessions =
 
-  let private subscribeSessions (client: FirebaseClient) (dispatch: SessionEvent -> unit) : IDisposable =
-    // Initial snapshot — silently ignored if connection races; streaming catches up
+  // Load the full sessions list. Like Session.loadData, this re-reads the whole
+  // payload so the reload-on-change subscription always sees a consistent snapshot.
+  let loadAll (client: FirebaseClient) : Async<(string * Session.Data) list option> =
     async {
       try
         let! sessions = client.Child(sessionsPath).OnceAsync<Session.Data>() |> Async.AwaitTask
 
-        sessions
-        |> Seq.map (fun o -> o.Key, o.Object)
-        |> Seq.toList
-        |> SessionsLoaded
-        |> dispatch
+        return
+          sessions
+          |> Seq.map (fun o -> o.Key, o.Object)
+          |> Seq.toList
+          |> Some
       with _ ->
-        ()
+        return None
     }
-    |> Async.Start
 
-    let onNext (ev: FirebaseEvent<Session.Data>) =
-      try
-        match String.IsNullOrEmpty ev.Key with
-        | true -> ()
-        | false ->
-          match ev.EventType with
-          | FirebaseEventType.Delete -> dispatch (SessionRemoved ev.Key)
-          | _ ->
-            match isNull (box ev.Object) with
-            | true -> ()
-            | false -> dispatch (SessionChanged(ev.Key, ev.Object))
-      with e ->
-        dispatch (ConnectionError(formatError e))
-
-    let onError (e: exn) =
-      dispatch (ConnectionError(formatError e))
-
-    client
-      .Child(sessionsPath)
-      .AsObservable<Session.Data>()
-      .Subscribe(Action<FirebaseEvent<Session.Data>> onNext, Action<exn> onError)
-
+  // Mirror the session-details sync: any change anywhere under /sessions (a new
+  // session, a deleted one, or a nested widget edit) triggers a full reload via
+  // subscribeReload, which also performs an initial load on registration. This is
+  // far more reliable than deserializing heterogeneous per-child streaming events
+  // into Session.Data, which silently dropped new-session events.
   let subscription (client: FirebaseClient) (wrap: SessionEvent -> 'appMsg) _ = [
-    [ "firebase-sessions" ], fun dispatch -> subscribeSessions client (wrap >> dispatch)
+    [ "firebase-sessions" ],
+    fun dispatch ->
+      subscribeReload
+        (client.Child(sessionsPath))
+        (fun () -> loadAll client)
+        (function
+          | Some sessions -> dispatch (wrap (SessionsLoaded sessions))
+          | None -> ())
+        (fun e -> dispatch (wrap (ConnectionError e)))
   ]
 
   let create
@@ -696,3 +687,21 @@ module Timer =
     fun dispatch ->
       subscribeReload (timerPath client sessionId) (fun () -> load client sessionId) (wrap >> dispatch) (fun _ -> ())
   ]
+
+// ─── Drive history ───────────────────────────────────────────────────────────
+
+module History =
+
+  let private historyPath (client: FirebaseClient) (sessionId: string) =
+    client.Child(sessionsPath).Child(sessionId).Child("driveHistory")
+
+  // Append-only: PostAsync mints a chronological push key per event, so the log
+  // preserves order and never overwrites prior entries.
+  let append (client: FirebaseClient) (sessionId: string) (event: Session.DriveEvent) : Async<unit> =
+    async {
+      try
+        let! _ = (historyPath client sessionId).PostAsync(event :> obj) |> Async.AwaitTask
+        return ()
+      with _ ->
+        return ()
+    }
