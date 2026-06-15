@@ -46,6 +46,7 @@ type Msg =
   | SetActiveDriver of string option
   | ActiveDriverSaved
   | SwitchDriver
+  | DriveLogged
   | TimerMsg of Timer.Msg
 
 let private upsertUser (userName: string) (presence: Session.UserPresence) (model: Model) : Model =
@@ -106,7 +107,7 @@ let init (client: FirebaseClient) (sessionId: string) (currentUser: string) (ava
           Color = colorByName data.ActiveDriver
         }
     CurrentUser = me
-    Timer = Timer.init client sessionId
+    Timer = Timer.init client sessionId currentUser
     Persistence = {
       Client = client
       SessionId = sessionId
@@ -118,6 +119,20 @@ let private activeDriverCmd (model: Model) (driver: string option) : Cmd<Msg> =
     (fun () -> Firebase.Sessions.setActiveDriver model.Persistence.Client model.Persistence.SessionId driver)
     ()
     (fun () -> ActiveDriverSaved)
+
+// SwitchDriver only ever runs on the client that pressed the key, so these appends
+// are inherently single-writer and the drive-history log stays duplicate-free.
+let private logDriveCmd (model: Model) (eventType: Session.DriveEventType) (driver: string) : Cmd<Msg> =
+  Cmd.OfAsync.perform
+    (fun () ->
+      Firebase.History.append model.Persistence.Client model.Persistence.SessionId {
+        Session.DriveEvent.Type = Session.DriveEventType.toString eventType
+        Session.DriveEvent.Driver = driver
+        Session.DriveEvent.By = model.CurrentUser.Name
+        Session.DriveEvent.At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+      })
+    ()
+    (fun () -> DriveLogged)
 
 let private feedTimer (deps: Dependencies) (model: Model) : Timer.Model * Cmd<Msg> =
   let connectedUsers = model.Users |> List.map (fun u -> u.Name)
@@ -148,6 +163,7 @@ let update (deps: Dependencies) msg model =
 
   | SetActiveDriver driver -> model, activeDriverCmd model driver
   | ActiveDriverSaved -> model, []
+  | DriveLogged -> model, []
 
   | SwitchDriver ->
     let users = model.Users
@@ -173,7 +189,26 @@ let update (deps: Dependencies) msg model =
           Timer = Timer.resetForDriver model.Timer nextDriverName connectedNames avatarMap
     }
 
-    m, Cmd.batch [ activeDriverCmd m nextDriverName; Cmd.ofMsg (TimerMsg Timer.Start) ]
+    // Close the outgoing driver's segment only if a drive was actually running
+    // (a prior Stop/Skip/Finish already logged its end otherwise), then open the
+    // incoming driver's segment.
+    let endOutgoingCmd =
+      match model.ActiveDriver, model.Timer.State with
+      | Some outgoing, Timer.Running -> logDriveCmd model Session.DriveEventType.Switched outgoing.Name
+      | _ -> Cmd.none
+
+    let startIncomingCmd =
+      match nextDriverName with
+      | Some name -> logDriveCmd model Session.DriveEventType.Started name
+      | None -> Cmd.none
+
+    m,
+    Cmd.batch [
+      activeDriverCmd m nextDriverName
+      endOutgoingCmd
+      startIncomingCmd
+      Cmd.ofMsg (TimerMsg Timer.Start)
+    ]
 
   | TimerMsg tMsg ->
     let m, cmd = Timer.update deps tMsg model.Timer

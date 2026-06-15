@@ -169,12 +169,14 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
       model, Cmd.OfAsync.perform (fun () -> Firebase.Sessions.delete model.Client sessionId) () DeleteCompleted, None
   | FirebaseEvent(Firebase.SessionsLoaded sessions) ->
     let sorted = sortSessions sessions
+    let liveIds = sorted |> List.map fst |> Set.ofList
 
     {
       model with
           Sessions = sorted
           SelectedIndex = clampIndex sorted model.SelectedIndex
           Status = "connected"
+          ConnectedUsers = model.ConnectedUsers |> Map.filter (fun id _ -> Set.contains id liveIds)
     },
     [],
     None
