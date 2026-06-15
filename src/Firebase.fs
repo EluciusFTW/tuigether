@@ -688,6 +688,33 @@ module Timer =
       subscribeReload (timerPath client sessionId) (fun () -> load client sessionId) (wrap >> dispatch) (fun _ -> ())
   ]
 
+  // Pause a running drive remotely — used when the active driver leaves/quits so the
+  // drive doesn't keep counting down with nobody at the wheel. Freezes the remaining
+  // time (derived from the authoritative EndsAt) and clears EndsAt. Returns whether it
+  // actually paused (i.e. a drive was running), so the caller can log a Paused event.
+  let pauseIfRunning (client: FirebaseClient) (sessionId: string) : Async<bool> =
+    async {
+      try
+        let! state = load client sessionId
+
+        match state with
+        | Some s when s.IsRunning ->
+          let now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+          let remainingSeconds = max 0 (int ((s.EndsAt - now) / 1000L))
+
+          do!
+            save client sessionId {
+              Session.TimerState.RemainingSeconds = remainingSeconds
+              Session.TimerState.IsRunning = false
+              Session.TimerState.EndsAt = 0L
+            }
+
+          return true
+        | _ -> return false
+      with _ ->
+        return false
+    }
+
 // ─── Drive history ───────────────────────────────────────────────────────────
 
 module History =
@@ -705,3 +732,34 @@ module History =
       with _ ->
         return ()
     }
+
+  // The whole log is a dictionary of pushKey -> event; push keys sort chronologically.
+  let load
+    (client: FirebaseClient)
+    (sessionId: string)
+    : Async<System.Collections.Generic.Dictionary<string, Session.DriveEvent> option> =
+    async {
+      try
+        let! events =
+          (historyPath client sessionId)
+            .OnceSingleAsync<System.Collections.Generic.Dictionary<string, Session.DriveEvent>>()
+          |> Async.AwaitTask
+
+        return
+          match isNull (box events) with
+          | true -> None
+          | false -> Some events
+      with _ ->
+        return None
+    }
+
+  let subscription
+    (client: FirebaseClient)
+    (sessionId: string)
+    (wrap: System.Collections.Generic.Dictionary<string, Session.DriveEvent> option -> 'appMsg)
+    =
+    [
+      [ "drive-history"; sessionId ],
+      fun dispatch ->
+        subscribeReload (historyPath client sessionId) (fun () -> load client sessionId) (wrap >> dispatch) (fun _ -> ())
+    ]

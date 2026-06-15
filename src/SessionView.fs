@@ -4,9 +4,11 @@ open System
 open Dependencies
 open Elmish
 open Firebase.Database
+open Spectre.Console
 open Spectre.Tui
 open Spectre.Tui.App
 open Keymap
+open SpectreTuff
 open SpectreTuff.Layout
 open SpectreTuff.Widgets
 
@@ -22,6 +24,8 @@ type Model = {
   TodoList: TodoList.Model
   SessionInfo: SessionInfo.Model
   Journey: Journey.Model
+  DriveLog: DriveLog.Model
+  ShowDriveLog: bool
 }
 
 type Msg =
@@ -33,9 +37,11 @@ type Msg =
   | TodoListMsg of TodoList.Msg
   | SessionInfoMsg of SessionInfo.Msg
   | JourneyMsg of Journey.Msg
+  | DriveLogMsg of DriveLog.Msg
+  | ToggleDriveLog
   | UpdateSession of Session.Data option
 
-type OutMsg = LeaveSession of sessionId: string * user: string * wasStarted: bool
+type OutMsg = LeaveSession of sessionId: string * user: string * wasStarted: bool * wasDriver: bool
 
 let init (client: FirebaseClient) (user: string) (avatarName: string) (sessionId: string) (sessionData: Session.Data) =
   let model = {
@@ -50,6 +56,8 @@ let init (client: FirebaseClient) (user: string) (avatarName: string) (sessionId
     TodoList = TodoList.init client sessionId
     SessionInfo = SessionInfo.init client sessionId user sessionData
     Journey = Journey.init client sessionId user avatarName sessionData
+    DriveLog = DriveLog.init client sessionId
+    ShowDriveLog = false
   }
 
   let joinCmd = Cmd.OfAsync.perform (fun () -> Firebase.Users.join client sessionId user avatarName) () JoinCompleted
@@ -61,6 +69,13 @@ let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
   match msg with
   | GoBack ->
     let wasStarted = Session.Status.fromString model.SessionData.Status = Session.Status.Started
+
+    // Whether the leaver is the current driver — if so, the drive is paused during
+    // leave finalization (see Application.leaveFinalizeCmd) so it stops counting down.
+    let wasDriver =
+      match model.Journey.ActiveDriver with
+      | Some driver -> driver.Name = model.User
+      | None -> false
 
     let clearDriverCmd =
       match model.Journey.ActiveDriver with
@@ -79,7 +94,7 @@ let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
 
     model,
     Cmd.batch [ clearDriverCmd; exitNotesInsertCmd; exitGoalInsertCmd ],
-    Some(LeaveSession(model.SessionId, model.User, wasStarted))
+    Some(LeaveSession(model.SessionId, model.User, wasStarted, wasDriver))
   | JoinCompleted(Ok()) ->
     let startedCmd =
       match Session.Status.fromString model.SessionData.Status with
@@ -109,6 +124,16 @@ let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
   | JourneyMsg jMsg ->
     let m, cmd = Journey.update deps jMsg model.Journey
     { model with Journey = m }, Cmd.map JourneyMsg cmd, None
+  | DriveLogMsg dMsg ->
+    let m, cmd = DriveLog.update dMsg model.DriveLog
+    { model with DriveLog = m }, Cmd.map DriveLogMsg cmd, None
+  | ToggleDriveLog ->
+    {
+      model with
+          ShowDriveLog = not model.ShowDriveLog
+    },
+    [],
+    None
   | UpdateSession(Some data) ->
     let journeyM, journeyCmd = Journey.update deps (Journey.UpdateSession data) model.Journey
     let infoM, infoCmd = SessionInfo.update (SessionInfo.SessionDataUpdated data) model.SessionInfo
@@ -131,6 +156,7 @@ let subscriptions (model: Model) =
   (Notes.subscriptions model.Notes |> subMap NotesMsg)
   @ (TodoList.subscriptions model.TodoList |> subMap TodoListMsg)
   @ (Journey.subscriptions model.Journey |> subMap JourneyMsg)
+  @ (DriveLog.subscriptions model.DriveLog |> subMap DriveLogMsg)
   @ Firebase.Sessions.dataSubscription model.Client model.SessionId UpdateSession
 
 let private outerBindings: KeyBinding<Model, Msg> list = [
@@ -142,6 +168,7 @@ let private outerBindings: KeyBinding<Model, Msg> list = [
     Description = "next panel"
     Message = Some(FocusPanel(model.Focus % 4 + 1))
   })
+  KeyBinding.create 'j' "journey log" ToggleDriveLog
 ]
 
 let private panelCount = 4
@@ -157,11 +184,14 @@ let private tryFocusNumber (key: ConsoleKeyInfo) =
   | _ -> None
 
 let capturesInput (model: Model) =
-  match model.Focus with
-  | 1 -> SessionInfo.capturesInput model.SessionInfo
-  | 2 -> Notes.capturesInput model.Notes
-  | 3 -> TodoList.capturesInput model.TodoList
-  | _ -> false
+  match model.ShowDriveLog with
+  | true -> true // modal overlay grabs all keys until closed
+  | false ->
+    match model.Focus with
+    | 1 -> SessionInfo.capturesInput model.SessionInfo
+    | 2 -> Notes.capturesInput model.Notes
+    | 3 -> TodoList.capturesInput model.TodoList
+    | _ -> false
 
 let private stageHelp (model: Model) =
   match model.Journey.Timer.State with
@@ -177,6 +207,12 @@ let private canFastForward (model: Model) =
   | Timer.Running -> true
   | _ -> false
 
+let private pauseHelp (model: Model) =
+  match model.Journey.Timer.State with
+  | Timer.Running -> Some "pause"
+  | Timer.Paused -> Some "resume"
+  | _ -> None
+
 let private globalKeyToMsg (model: Model) (gMsg: GlobalKeys.Msg) : Msg =
   match gMsg with
   | GlobalKeys.StageDrive ->
@@ -184,11 +220,25 @@ let private globalKeyToMsg (model: Model) (gMsg: GlobalKeys.Msg) : Msg =
     | Timer.Running -> JourneyMsg(Journey.TimerMsg Timer.Stop)
     | _ -> JourneyMsg Journey.SwitchDriver
   | GlobalKeys.FastForward -> JourneyMsg(Journey.TimerMsg Timer.SkipTimer)
+  | GlobalKeys.PauseResume ->
+    match model.Journey.Timer.State with
+    | Timer.Paused -> JourneyMsg(Journey.TimerMsg Timer.Start) // resume
+    | _ -> JourneyMsg(Journey.TimerMsg Timer.Pause) // pause (no-op unless Running)
 
 let private isShiftTab (key: ConsoleKeyInfo) =
   key.Key = ConsoleKey.Tab && key.Modifiers.HasFlag(ConsoleModifiers.Shift)
 
 let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
+  match model.ShowDriveLog with
+  | true ->
+    match key.Key with
+    | ConsoleKey.Escape -> Some ToggleDriveLog
+    | ConsoleKey.J -> Some ToggleDriveLog
+    | ConsoleKey.UpArrow -> Some(DriveLogMsg DriveLog.Up)
+    | ConsoleKey.DownArrow -> Some(DriveLogMsg DriveLog.Down)
+    | _ -> None
+  | false ->
+
   match capturesInput model with
   | true ->
     match model.Focus with
@@ -197,7 +247,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | 3 -> TodoList.handleKey key model.TodoList |> Option.map TodoListMsg
     | _ -> None
   | false ->
-    GlobalKeys.handleKey (canFastForward model) key
+    GlobalKeys.handleKey (canFastForward model) (pauseHelp model) key
     |> Option.map (globalKeyToMsg model)
     |> Option.orElseWith (fun () -> tryFocusNumber key)
     |> Option.orElseWith (fun () ->
@@ -228,7 +278,9 @@ let keyMap (model: Model) : Spectre.Tui.App.IKeyMap =
         Seq.append (outer.Help()) (shiftTabHelp.Help())
   }
 
-let helpKeyMaps (model: Model) : IKeyMap list = [ GlobalKeys.keyMap (stageHelp model) (canFastForward model) ]
+let helpKeyMaps (model: Model) : IKeyMap list = [
+  GlobalKeys.keyMap (stageHelp model) (canFastForward model) (pauseHelp model)
+]
 
 let private emptyKeyMap: IKeyMap =
   { new IKeyMap with
@@ -337,4 +389,18 @@ let widget (model: Model) : IWidget =
             (withPanelKeys (Journey.widget model.Journey) emptyKeyMap (model.Focus = 4)),
           workPort "journey"
         )
+
+        match model.ShowDriveLog with
+        | true ->
+          let w = min (ctx.Viewport.Width - 4) 80
+          let h = min (ctx.Viewport.Height - 4) 28
+
+          let boxed =
+            box (Look.fromColor Color.Aqua)
+            |> withTitle "Journey — drive history"
+            |> withInnerWidget (DriveLog.widget model.DriveLog)
+            :> IWidget
+
+          ctx.Render(popup w h |> withPopupContent boxed :> IWidget)
+        | false -> ()
   }

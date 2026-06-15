@@ -150,6 +150,8 @@ let update (deps: Dependencies) msg model =
     match model.State with
     | Idle
     | Paused ->
+      let resuming = model.State = Paused
+
       match model.State with
       | Idle -> deps.Notify "Work started!"
       | _ -> deps.Notify "Work resumed"
@@ -164,10 +166,16 @@ let update (deps: Dependencies) msg model =
             EndsAt = Some endsAt
       }
 
-      // No history here: the only path to a Work start is Journey.SwitchDriver
-      // (local-only), which logs the Started event. Start is also dispatched when
-      // adopting remote state, so logging here would duplicate across clients.
-      m, Cmd.batch [ tickCmd epoch; saveCmd m ]
+      // A fresh start (from Idle) carries no history here: the only path to it is
+      // Journey.SwitchDriver (local-only), which logs the Started event. But a
+      // resume (from Paused) is local-only too — RemoteStateLoaded no longer
+      // dispatches Start — so log Resumed to close out the paused interval.
+      let logCmd =
+        match resuming with
+        | true -> historyCmd model Session.DriveEventType.Resumed
+        | false -> Cmd.none
+
+      m, Cmd.batch [ tickCmd epoch; saveCmd m; logCmd ]
     | _ -> model, []
   | Stop ->
     deps.Notify "Timer stopped"
@@ -192,7 +200,7 @@ let update (deps: Dependencies) msg model =
             EndsAt = None
       }
 
-      m, saveCmd m
+      m, Cmd.batch [ saveCmd m; historyCmd model Session.DriveEventType.Paused ]
     | _ -> model, []
   | Tick epoch when epoch <> model.TickEpoch -> model, []
   | Tick _ ->

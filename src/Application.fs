@@ -146,10 +146,35 @@ let private handleSessionListOutMsg
     Cmd.map SessionViewMsg viewCmd
   | None -> model, []
 
-let private leaveFinalizeCmd (client: FirebaseClient) (sessionId: string) (user: string) (wasStarted: bool) : Cmd<Msg> =
+let private leaveFinalizeCmd
+  (client: FirebaseClient)
+  (sessionId: string)
+  (user: string)
+  (wasStarted: bool)
+  (wasDriver: bool)
+  : Cmd<Msg> =
   Cmd.OfAsync.perform
     (fun () ->
       async {
+        // If the active driver is leaving, pause the running drive first so it stops
+        // counting down with nobody driving. Awaited here (not dispatched as a message)
+        // so it completes even on quit, before the app exits via LeaveFinalized.
+        match wasDriver with
+        | true ->
+          let! paused = Firebase.Timer.pauseIfRunning client sessionId
+
+          match paused with
+          | true ->
+            do!
+              Firebase.History.append client sessionId {
+                Session.DriveEvent.Type = Session.DriveEventType.toString Session.DriveEventType.Paused
+                Session.DriveEvent.Driver = user
+                Session.DriveEvent.By = user
+                Session.DriveEvent.At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+              }
+          | false -> ()
+        | false -> ()
+
         let! result = Firebase.Users.leaveAndCheckLast client sessionId user
 
         match result, wasStarted with
@@ -165,8 +190,8 @@ let private handleSessionViewOutMsg
   (out: SessionView.OutMsg option)
   : Model * Cmd<Msg> =
   match out with
-  | Some(SessionView.LeaveSession(sessionId, user, wasStarted)) ->
-    { model with Page = SessionListPage }, leaveFinalizeCmd client sessionId user wasStarted
+  | Some(SessionView.LeaveSession(sessionId, user, wasStarted, wasDriver)) ->
+    { model with Page = SessionListPage }, leaveFinalizeCmd client sessionId user wasStarted wasDriver
   | None -> model, []
 
 let update (deps: Dependencies) (user: string) msg model =

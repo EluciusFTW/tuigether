@@ -75,6 +75,8 @@ type DriveEventType =
   | Skipped
   | Finished
   | Switched
+  | Paused
+  | Resumed
 
 module DriveEventType =
   let toString =
@@ -84,6 +86,18 @@ module DriveEventType =
     | DriveEventType.Skipped -> "Skipped"
     | DriveEventType.Finished -> "Finished"
     | DriveEventType.Switched -> "Switched"
+    | DriveEventType.Paused -> "Paused"
+    | DriveEventType.Resumed -> "Resumed"
+
+  let fromString (s: string) =
+    match s with
+    | "Stopped" -> DriveEventType.Stopped
+    | "Skipped" -> DriveEventType.Skipped
+    | "Finished" -> DriveEventType.Finished
+    | "Switched" -> DriveEventType.Switched
+    | "Paused" -> DriveEventType.Paused
+    | "Resumed" -> DriveEventType.Resumed
+    | _ -> DriveEventType.Started
 
 [<CLIMutable>]
 type DriveEvent = {
