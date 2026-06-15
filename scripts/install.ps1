@@ -1,5 +1,5 @@
 # Build tuigether (Release, single-file, framework-dependent) and install onto PATH.
-# Usage: src\tuigether\scripts\install.ps1 [-InstallDir <dir>]
+# Usage: scripts\install.ps1 [-InstallDir <dir>]
 # Default dir: %LOCALAPPDATA%\Programs\tuigether. Linux/macOS: use install.sh.
 #Requires -Version 5
 [CmdletBinding()]
@@ -8,8 +8,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-# Script lives in src\tuigether\scripts, so the project is its parent directory.
-$project = Split-Path -Parent $PSScriptRoot
+# Script lives in scripts\, the project lives in src\ next to it.
+$project = Join-Path (Split-Path -Parent $PSScriptRoot) 'src'
 
 $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $rid = "win-$arch"

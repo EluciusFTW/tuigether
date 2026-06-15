@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build tuigether (Release, single-file, framework-dependent) and install onto PATH.
-# Usage: src/tuigether/scripts/install.sh [install-dir]    (default: ~/.local/bin)
+# Usage: scripts/install.sh [install-dir]    (default: ~/.local/bin)
 # Override dir via arg or TUIGETHER_INSTALL_DIR. Windows: use install.ps1.
 set -euo pipefail
 
-# Script lives in src/tuigether/scripts, so the project is its parent directory.
-project="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Script lives in scripts/, the project lives in src/ next to it.
+project="$(cd "$(dirname "${BASH_SOURCE[0]}")/../src" && pwd)"
 install_dir="${1:-${TUIGETHER_INSTALL_DIR:-$HOME/.local/bin}}"
 
 case "$(uname -s)" in
