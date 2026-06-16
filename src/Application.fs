@@ -57,10 +57,12 @@ let private globalBindings: Keymap.KeyBinding<unit, Msg> list = [
 let private handleGlobalKey (key: ConsoleKeyInfo) : Msg option =
   Keymap.KeyBinding.handleKey globalBindings key ()
 
-let private globalKeyMap: IKeyMap =
+// Not private: consumed by the AppView rendering module (help bar) and below.
+let globalKeyMap: IKeyMap =
   Keymap.KeyBinding.toKeyMap globalBindings ()
 
-let private buildPanels (model: Model) : Panel list =
+// Not private: buildPanels drives both input routing (here) and rendering (AppView).
+let buildPanels (model: Model) : Panel list =
   match model.Page with
   | SessionListPage -> [
       {
@@ -211,61 +213,6 @@ let subscriptions (model: Model) =
   match model.Page with
   | SessionListPage -> SessionList.subscriptions model.SessionList |> Subs.map SessionListMsg
   | SessionViewPage vm -> SessionView.subscriptions vm |> Subs.map SessionViewMsg
-
-type AppView(model: Model) =
-  interface IWidget with
-    member _.Render(ctx: RenderContext) =
-      let panels = buildPanels model
-      let slotPort = AppLayout.portFor ctx.Viewport (AppLayout.mainLayout model.LogVisible)
-
-      for panel in panels do
-        let composedWidget =
-          { new IWidget with
-              member _.Render(ctx) =
-                match panel.Boxed with
-                | true ->
-                  let port = AppLayout.portFor ctx.Viewport AppLayout.panelInnerLayout
-                  ctx.Render(panel.Widget, port AppLayout.Content)
-                  ctx.Render(help [ panel.KeyMap ] |> leftAligned, port AppLayout.Keys)
-                | false -> ctx.Render(panel.Widget, ctx.Viewport)
-          }
-
-        let renderedPanel: IWidget =
-          match panel.Boxed with
-          | true ->
-            let focusState =
-              match panel.CapturesInput, panel.Focused with
-              | true, _ -> Capturing
-              | _, true -> Focused
-              | _ -> Unfocused
-
-            focusableBox panel.Title panel.Number focusState composedWidget :> IWidget
-          | false -> composedWidget
-
-        ctx.Render(renderedPanel, slotPort panel.LayoutSlot)
-
-      match model.LogVisible with
-      | true -> Log.view model.LogModel ctx (slotPort AppLayout.Log)
-      | false -> ()
-
-      let helpMaps =
-        match model.Page with
-        | SessionViewPage viewModel ->
-          [ SessionView.keyMap viewModel ]
-          @ SessionView.helpKeyMaps viewModel
-          @ [ globalKeyMap ]
-        | _ -> [ globalKeyMap ]
-
-      ctx.Render(help helpMaps |> leftAligned, slotPort AppLayout.Help)
-
-// Spectre.Tui's AnsiTerminal keeps mutable buffer/state shared across writes
-// and is not thread-safe. Subscription callbacks (Firebase observables, async
-// completions) can dispatch from thread-pool threads, so view may be invoked
-// concurrently. Serialize draws here.
-let private renderLock = obj ()
-
-let view (renderer: Renderer) (model: Model) _dispatch =
-  lock renderLock (fun () -> renderer.Draw(fun ctx _ -> ctx.Render(AppView model)))
 
 let traceToLog msg (model: Model) _ =
   match msg with

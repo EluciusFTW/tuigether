@@ -34,7 +34,7 @@ match Config.load () with
   Elmish.Program.mkProgram
     (Application.init client settings.TuigetherUser)
     (Application.update deps settings.TuigetherUser)
-    (Application.view renderer)
+    (AppView.view renderer)
   |> Elmish.Program.withSubscription (fun model ->
     Input.subscription Application.InputMsg model
     @ Tick.subscription (TimeSpan.FromMilliseconds 200.0) Application.Tick model

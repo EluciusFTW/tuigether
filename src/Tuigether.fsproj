@@ -41,6 +41,7 @@
     <Compile Include="SessionOrchestration.fs" />
     <Compile Include="AppLayout.fs" />
     <Compile Include="Application.fs" />
+    <Compile Include="AppView.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
