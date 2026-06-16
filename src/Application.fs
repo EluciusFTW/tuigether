@@ -43,7 +43,6 @@ type Panel = {
   Widget: IWidget
   KeyMap: IKeyMap
   HandleKey: ConsoleKeyInfo -> Msg option
-  Update: Msg -> Model -> (Model * Cmd<Msg>) option
 }
 
 let exitEvent = new Threading.ManualResetEventSlim false
@@ -74,7 +73,6 @@ let private buildPanels (model: Model) : Panel list =
         Widget = SessionList.widget model.SessionList
         KeyMap = SessionList.keyMap model.SessionList
         HandleKey = fun key -> SessionList.handleKey key model.SessionList |> Option.map SessionListMsg
-        Update = fun _ _ -> None
       }
     ]
   | SessionViewPage viewModel -> [
@@ -88,7 +86,6 @@ let private buildPanels (model: Model) : Panel list =
         Widget = SessionView.widget viewModel
         KeyMap = SessionView.keyMap viewModel
         HandleKey = fun key -> SessionView.handleKey key viewModel |> Option.map SessionViewMsg
-        Update = fun _ _ -> None
       }
     ]
 
