@@ -135,33 +135,7 @@ let private leaveFinalizeCmd
   (wasDriver: bool)
   : Cmd<Msg> =
   Cmd.OfAsync.perform
-    (fun () ->
-      async {
-        // If the active driver is leaving, pause the running drive first so it stops
-        // counting down with nobody driving. Awaited here (not dispatched as a message)
-        // so it completes even on quit, before the app exits via LeaveFinalized.
-        match wasDriver with
-        | true ->
-          let! paused = Firebase.Timer.pauseIfRunning client sessionId
-
-          match paused with
-          | true ->
-            do!
-              Firebase.History.append client sessionId {
-                Session.DriveEvent.Type = Session.DriveEventType.toString Session.DriveEventType.Paused
-                Session.DriveEvent.Driver = user
-                Session.DriveEvent.By = user
-                Session.DriveEvent.At = Clock.nowMs ()
-              }
-          | false -> ()
-        | false -> ()
-
-        let! result = Firebase.Users.leaveAndCheckLast client sessionId user
-
-        match result, wasStarted with
-        | Ok true, true -> do! Firebase.Sessions.setStatus client sessionId Session.Status.Finished
-        | _ -> ()
-      })
+    (fun () -> SessionOrchestration.leaveAndFinalize client sessionId user wasStarted wasDriver)
     ()
     (fun () -> LeaveFinalized)
 
