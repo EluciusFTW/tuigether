@@ -6,6 +6,7 @@ open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open Keymap
+open Locking
 open SpectreTuff
 open SpectreTuff.Layout
 open SpectreTuff.Widgets
@@ -33,11 +34,6 @@ type InputMode =
   | BranchPopup of BranchPopup
   | SyncPopup of SyncPopupStage
 
-// Goal editing is single-writer: the user in Insert mode owns the lock and other
-// users cannot enter Insert until it's released. LockedAt is refreshed on every
-// debounced save so a crashed holder's lock expires after lockTtlMs.
-type Lock = { Owner: string; LockedAt: int64 }
-
 type Model = {
   Client: FirebaseClient
   SessionId: string
@@ -47,7 +43,7 @@ type Model = {
   GoalSaveToken: int
   InsertActivityToken: int
   InputMode: InputMode
-  Lock: Lock option
+  Lock: Locking.Lock option
   GitBranch: string
   LocalGitBranch: string
   GitRepo: string
@@ -84,20 +80,11 @@ type Msg =
 
 let private goalDebounceMs = 300
 let private autoExitInsertMs = 30_000
-let private lockTtlMs = 60_000L
 
-let private nowMs () : int64 =
-  DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-
-let private isLockActive (now: int64) (lock: Lock option) =
-  match lock with
-  | Some l -> now - l.LockedAt <= lockTtlMs
-  | None -> false
+let private nowMs () : int64 = Clock.nowMs ()
 
 let private isLockedByOther (model: Model) =
-  match model.Lock with
-  | Some l when isLockActive (nowMs ()) (Some l) -> l.Owner <> model.User
-  | _ -> false
+  Locking.heldByOther (nowMs ()) model.User model.Lock
 
 let isHoldingLock (model: Model) =
   match model.InputMode, model.Lock with
@@ -429,10 +416,7 @@ let update msg model =
 
     let updated = {
       model with
-          GoalContent =
-            match text with
-            | "" -> ""
-            | _ -> text.[.. text.Length - 2]
+          GoalContent = Str.dropLast text
           GoalSaveToken = bumped
           InsertActivityToken = activityToken
     }
@@ -551,17 +535,12 @@ let update msg model =
   | BranchTypeBackspace ->
     match model.InputMode with
     | BranchPopup({ Stage = EditingName _ } as popup) ->
-      let trimmed =
-        match popup.Name with
-        | "" -> ""
-        | text -> text.[.. text.Length - 2]
-
       {
         model with
             InputMode =
               BranchPopup {
                 popup with
-                    Name = trimmed
+                    Name = Str.dropLast popup.Name
                     Stage = EditingName None
               }
       },

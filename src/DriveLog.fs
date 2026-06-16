@@ -13,12 +13,10 @@ open SpectreTuff.Widgets
 // SessionView (a toggled overlay); this module owns the data, the segment
 // reconstruction, and the rendering of the overlay's inner content.
 
-type Persistence = { Client: FirebaseClient; SessionId: string }
-
 type Model = {
   Events: Session.DriveEvent list
   SelectedIndex: int
-  Persistence: Persistence
+  Persistence: Firebase.Persistence
 }
 
 type Msg =
@@ -71,11 +69,50 @@ let subscriptions (model: Model) =
 
 // ─── Segment reconstruction ──────────────────────────────────────────────────
 
+// How a drive segment ended (or, for the still-open one, its live state). Replaces
+// the previously stringly-typed outcome so the display label and colour derive from
+// a closed set of cases rather than ad-hoc string matching.
+type private Outcome =
+  | Live
+  | Paused
+  | Switched
+  | Stopped
+  | Skipped
+  | Finished
+
+module private Outcome =
+  // The event that closes a segment maps to the matching outcome. Started/Paused/
+  // Resumed never close a segment, so they fall back to Switched defensively.
+  let ofEndEvent =
+    function
+    | Session.DriveEventType.Stopped -> Stopped
+    | Session.DriveEventType.Skipped -> Skipped
+    | Session.DriveEventType.Finished -> Finished
+    | _ -> Switched
+
+  let label =
+    function
+    | Live -> "live"
+    | Paused -> "paused"
+    | Switched -> "switched"
+    | Stopped -> "stopped"
+    | Skipped -> "skipped"
+    | Finished -> "finished"
+
+  let color =
+    function
+    | Live -> Color.Green
+    | Paused -> Color.Yellow
+    | Finished -> Color.Grey
+    | Stopped -> Color.Yellow
+    | Skipped -> Color.Orange1
+    | Switched -> Color.Aqua
+
 type private Segment = {
   Driver: string
   StartAt: int64
   EndAt: int64 option // None = still driving (live)
-  Outcome: string
+  Outcome: Outcome
   ActiveMs: int64 // net driving time = gross span minus paused intervals
   CurrentlyPaused: bool
 }
@@ -103,7 +140,7 @@ let private reconstruct (nowMs: int64) (events: Session.DriveEvent list) : Segme
        | Some p -> max 0L (upTo - p)
        | None -> 0L)
 
-  let close (o: OpenSeg) (endAt: int64) (outcome: string) = {
+  let close (o: OpenSeg) (endAt: int64) (outcome: Outcome) = {
     Driver = o.Driver
     StartAt = o.StartAt
     EndAt = Some endAt
@@ -118,7 +155,7 @@ let private reconstruct (nowMs: int64) (events: Session.DriveEvent list) : Segme
     match Session.DriveEventType.fromString ev.Type with
     | Session.DriveEventType.Started ->
       match openSeg with
-      | Some o -> acc <- close o t "switched" :: acc
+      | Some o -> acc <- close o t Switched :: acc
       | None -> ()
 
       openSeg <-
@@ -148,7 +185,7 @@ let private reconstruct (nowMs: int64) (events: Session.DriveEvent list) : Segme
     | other ->
       match openSeg with
       | Some o ->
-        acc <- close o t ((Session.DriveEventType.toString other).ToLower()) :: acc
+        acc <- close o t (Outcome.ofEndEvent other) :: acc
         openSeg <- None
       | None -> ()
 
@@ -161,7 +198,7 @@ let private reconstruct (nowMs: int64) (events: Session.DriveEvent list) : Segme
         Driver = o.Driver
         StartAt = o.StartAt
         EndAt = None
-        Outcome = (if currentlyPaused then "paused" else "live")
+        Outcome = (if currentlyPaused then Paused else Live)
         ActiveMs = max 0L (nowMs - o.StartAt - pausedTotal o nowMs)
         CurrentlyPaused = currentlyPaused
       }
@@ -185,15 +222,6 @@ let private formatDuration (millis: int64) =
   | 0L, _ -> sprintf "%dm" minutes
   | _ -> sprintf "%dh %dm" hours minutes
 
-let private outcomeColor (outcome: string) =
-  match outcome with
-  | "live" -> Color.Green
-  | "paused" -> Color.Yellow
-  | "finished" -> Color.Grey
-  | "stopped" -> Color.Yellow
-  | "skipped" -> Color.Orange1
-  | _ -> Color.Aqua
-
 type private SegmentListItem(text: string, color: Color) =
   interface IListWidgetItem with
     member _.CreateText(_isSelected) =
@@ -208,7 +236,7 @@ let private innerLayout =
   |]
 
 let widget (model: Model) : IWidget =
-  let nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+  let nowMs = Clock.nowMs ()
   let segments = reconstruct nowMs model.Events
 
   let listWidget: IWidget =
@@ -230,9 +258,9 @@ let widget (model: Model) : IWidget =
               (formatTimeOfDay seg.StartAt)
               endStr
               (formatDuration seg.ActiveMs)
-              seg.Outcome
+              (Outcome.label seg.Outcome)
 
-          SegmentListItem(text, outcomeColor seg.Outcome))
+          SegmentListItem(text, Outcome.color seg.Outcome))
 
       list items
       |> withSelectedIndex (Some model.SelectedIndex)

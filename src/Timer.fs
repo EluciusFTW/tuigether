@@ -22,11 +22,6 @@ type TimerState =
   | Flashing of int
   | Breaking of int
 
-type Persistence = {
-  Client: FirebaseClient
-  SessionId: string
-}
-
 type Model = {
   Remaining: TimeSpan
   Phase: Phase
@@ -35,7 +30,7 @@ type Model = {
   ConnectedUsers: string list
   UserAvatars: Map<string, Color>
   TickEpoch: int
-  Persistence: Persistence
+  Persistence: Firebase.Persistence
   // Absolute instant (unix ms) the running Work countdown reaches zero. Drives
   // the displayed Remaining so all clients agree regardless of tick jitter.
   EndsAt: int64 option
@@ -110,7 +105,7 @@ let resetForDriver (previous: Model) (driver: string option) (users: string list
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
 
-let private nowMs () = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+let private nowMs () = Clock.nowMs ()
 
 let private toTimerState (model: Model) : Session.TimerState = {
   RemainingSeconds = int model.Remaining.TotalSeconds

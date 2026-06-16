@@ -1,6 +1,7 @@
-module TodoList
+module NoteList
 
 open System
+open System.Runtime.InteropServices
 open Elmish
 open Firebase.Database
 open Spectre.Console
@@ -13,17 +14,13 @@ type InputMode =
   | Normal
   | AddingItem of string
 
-// Items carry their Firebase push-ID so toggles and deletes target a stable key
-// and concurrent multi-user edits do not collide.
-type TodoItem = {
-  Id: string
-  Text: string
-  Completed: bool
-}
+// Items carry their Firebase push-ID so deletes target a stable key and
+// concurrent multi-user edits do not collide.
+type Item = { Id: string; Text: string }
 
 type Model = {
   InputMode: InputMode
-  Items: TodoItem list
+  Items: Item list
   SelectedIndex: int
   Persistence: Firebase.Persistence
 }
@@ -36,21 +33,17 @@ type Msg =
   | TypeBackspace
   | ConfirmAdd
   | CancelAdd
-  | Toggle
   | Delete
-  | MoveUp
-  | MoveDown
-  | RemoteStateLoaded of Session.TodoState option
+  | Copy
+  | RemoteStateLoaded of Session.ListState option
   | StateSaved
 
 let private normalBindings: KeyBinding<Model, Msg> list = [
   KeyBinding.createSpecial ConsoleKey.UpArrow "up" Up
   KeyBinding.createSpecial ConsoleKey.DownArrow "down" Down
   KeyBinding.create 'a' "add" StartAdd
-  KeyBinding.create ' ' "toggle" Toggle
   KeyBinding.create 'x' "delete" Delete
-  KeyBinding.create 'u' "move up" MoveUp
-  KeyBinding.create 'd' "move down" MoveDown
+  KeyBinding.create 'c' "copy" Copy
 ]
 
 let private addingItemBindings: KeyBinding<Model, Msg> list = [
@@ -74,10 +67,8 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | _ ->
       match key.KeyChar with
       | 'a' -> Some StartAdd
-      | ' ' -> Some Toggle
       | 'x' -> Some Delete
-      | 'u' -> Some MoveUp
-      | 'd' -> Some MoveDown
+      | 'c' -> Some Copy
       | 'j' -> Some Down
       | 'k' -> Some Up
       | _ -> None
@@ -95,6 +86,49 @@ let keyMap (model: Model) =
 
   KeyBinding.toKeyMap bindings model
 
+// Linux: order by display server. xclip exits non-zero under Wayland (no
+// throw), so wrong-server tool is last resort.
+let private clipboardCandidates () : (string * string) list =
+  match RuntimeInformation.IsOSPlatform OSPlatform.Windows, RuntimeInformation.IsOSPlatform OSPlatform.OSX with
+  | true, _ -> [ "clip", "" ]
+  | _, true -> [ "pbcopy", "" ]
+  | _ ->
+    let xclip = "xclip", "-selection clipboard"
+    let xsel = "xsel", "--clipboard --input"
+    let wlCopy = "wl-copy", ""
+
+    match Environment.GetEnvironmentVariable "WAYLAND_DISPLAY" with
+    | null
+    | "" -> [ xclip; xsel; wlCopy ]
+    | _ -> [ wlCopy; xclip; xsel ]
+
+let private tryCopyWith (fileName: string) (arguments: string) (text: string) : bool =
+  try
+    let psi = Diagnostics.ProcessStartInfo()
+    psi.FileName <- fileName
+    psi.Arguments <- arguments
+    psi.UseShellExecute <- false
+    psi.RedirectStandardInput <- true
+
+    use proc = Diagnostics.Process.Start psi
+    proc.StandardInput.Write text
+    proc.StandardInput.Close()
+    proc.WaitForExit()
+    proc.ExitCode = 0
+  with _ ->
+    false
+
+let private copyToClipboard (text: string) : Result<string, string> =
+  let rec attempt remaining =
+    match remaining with
+    | [] -> Error "no working clipboard tool found (install xclip, xsel, or wl-copy)"
+    | (fileName, arguments) :: rest ->
+      match tryCopyWith fileName arguments text with
+      | true -> Ok fileName
+      | false -> attempt rest
+
+  attempt (clipboardCandidates ())
+
 let init (client: FirebaseClient) (sessionId: string) = {
   InputMode = Normal
   Items = []
@@ -105,59 +139,17 @@ let init (client: FirebaseClient) (sessionId: string) = {
   }
 }
 
-let private addItemCmd (model: Model) (item: TodoItem) : Cmd<Msg> =
+let private addItemCmd (model: Model) (item: Item) : Cmd<Msg> =
   Cmd.OfAsync.perform
-    (fun () -> Firebase.Todo.addItem model.Persistence.Client model.Persistence.SessionId item.Id item.Text)
-    ()
-    (fun () -> StateSaved)
-
-let private setCompletedCmd (model: Model) (itemId: string) (completed: bool) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> Firebase.Todo.setCompleted model.Persistence.Client model.Persistence.SessionId itemId completed)
+    (fun () -> Firebase.NoteList.addItem model.Persistence.Client model.Persistence.SessionId item.Id item.Text)
     ()
     (fun () -> StateSaved)
 
 let private deleteItemCmd (model: Model) (itemId: string) : Cmd<Msg> =
   Cmd.OfAsync.perform
-    (fun () -> Firebase.Todo.deleteItem model.Persistence.Client model.Persistence.SessionId itemId)
+    (fun () -> Firebase.NoteList.deleteItem model.Persistence.Client model.Persistence.SessionId itemId)
     ()
     (fun () -> StateSaved)
-
-let private setItemCmd (model: Model) (item: TodoItem) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () ->
-      Firebase.Todo.setItem model.Persistence.Client model.Persistence.SessionId item.Id item.Text item.Completed)
-    ()
-    (fun () -> StateSaved)
-
-// Display order is the push-ID key order, so reordering swaps the two adjacent
-// items' content between their fixed key slots — the keys (and thus the sort
-// order on reload) stay put while the visible text/checkbox moves.
-let private swapAdjacent (model: Model) (topIndex: int) =
-  let top = model.Items.[topIndex]
-  let bottom = model.Items.[topIndex + 1]
-
-  let newTop = {
-    top with
-        Text = bottom.Text
-        Completed = bottom.Completed
-  }
-
-  let newBottom = {
-    bottom with
-        Text = top.Text
-        Completed = top.Completed
-  }
-
-  let newItems =
-    model.Items
-    |> List.mapi (fun idx it ->
-      match idx with
-      | _ when idx = topIndex -> newTop
-      | _ when idx = topIndex + 1 -> newBottom
-      | _ -> it)
-
-  newItems, newTop, newBottom
 
 let update msg model =
   match msg with
@@ -207,14 +199,13 @@ let update msg model =
     | AddingItem text ->
       let newText =
         match text.Trim() with
-        | "" -> "New todo"
+        | "" -> "New note"
         | s -> s
 
       // Push IDs are chronologically sortable, so new items always append.
       let newItem = {
         Id = Firebase.PushId.generate ()
         Text = newText
-        Completed = false
       }
 
       let newItems = model.Items @ [ newItem ]
@@ -229,25 +220,6 @@ let update msg model =
       updated, addItemCmd updated newItem
     | Normal -> model, []
   | CancelAdd -> { model with InputMode = Normal }, []
-  | Toggle ->
-    match model.Items with
-    | [] -> model, []
-    | _ ->
-      let item = model.Items.[model.SelectedIndex]
-
-      let toggled = {
-        item with
-            Completed = not item.Completed
-      }
-
-      let newItems =
-        model.Items
-        |> List.mapi (fun i it ->
-          match i = model.SelectedIndex with
-          | true -> toggled
-          | false -> it)
-
-      { model with Items = newItems }, setCompletedCmd model toggled.Id toggled.Completed
   | Delete ->
     match model.Items with
     | [] -> model, []
@@ -267,32 +239,15 @@ let update msg model =
       }
 
       updated, deleteItemCmd updated removed.Id
-  | MoveUp ->
-    match model.SelectedIndex with
-    | i when i > 0 ->
-      let newItems, newTop, newBottom = swapAdjacent model (i - 1)
+  | Copy ->
+    match model.Items with
+    | [] -> ()
+    | _ ->
+      match copyToClipboard model.Items.[model.SelectedIndex].Text with
+      | Ok tool -> Log.line (sprintf "copied list item to clipboard via %s" tool)
+      | Error message -> Log.line (sprintf "clipboard copy failed: %s" message)
 
-      let updated = {
-        model with
-            Items = newItems
-            SelectedIndex = i - 1
-      }
-
-      updated, Cmd.batch [ setItemCmd updated newTop; setItemCmd updated newBottom ]
-    | _ -> model, []
-  | MoveDown ->
-    match model.SelectedIndex with
-    | i when i < model.Items.Length - 1 ->
-      let newItems, newTop, newBottom = swapAdjacent model i
-
-      let updated = {
-        model with
-            Items = newItems
-            SelectedIndex = i + 1
-      }
-
-      updated, Cmd.batch [ setItemCmd updated newTop; setItemCmd updated newBottom ]
-    | _ -> model, []
+    model, []
   | RemoteStateLoaded(Some state) ->
     let items =
       match isNull state.Items with
@@ -300,11 +255,7 @@ let update msg model =
       | false ->
         state.Items
         |> Seq.sortBy (fun kvp -> kvp.Key)
-        |> Seq.map (fun kvp -> {
-          Id = kvp.Key
-          Text = kvp.Value.Text
-          Completed = kvp.Value.Completed
-        })
+        |> Seq.map (fun kvp -> { Id = kvp.Key; Text = kvp.Value })
         |> Seq.toList
 
     let selectedIndex =
@@ -322,36 +273,22 @@ let update msg model =
   | StateSaved -> model, []
 
 let subscriptions (model: Model) =
-  Firebase.Todo.subscription model.Persistence.Client model.Persistence.SessionId RemoteStateLoaded
+  Firebase.NoteList.subscription model.Persistence.Client model.Persistence.SessionId RemoteStateLoaded
 
-// Completed items render grey, still-to-do items green. The selected row inverts
-// to black-on-(state colour) — legible and calm, instead of the default list
-// item's bright yellow-on-blue.
-type private TodoListItem(text: string, completed: bool) =
+// List items render green, matching the Todo widget. The selected row inverts
+// to black-on-green instead of the default list item's yellow-on-blue.
+type private NoteListItem(text: string) =
   interface IListWidgetItem with
     member _.CreateText(isSelected) =
-      let stateColor =
-        match completed with
-        | true -> Color.Grey
-        | false -> Color.Green
-
       let style =
         match isSelected with
-        | true -> Style(Color.Black, stateColor)
-        | false -> Style(stateColor)
+        | true -> Style(Color.Black, Color.Green)
+        | false -> Style(Color.Green)
 
-      Text(LineExtensions.FromString(text, style))
+      Text(LineExtensions.FromString(" • " + text, style))
 
 let widget (model: Model) (isFocused: bool) : IWidget =
-  let items =
-    model.Items
-    |> List.map (fun item ->
-      let checkbox =
-        match item.Completed with
-        | true -> "[x] "
-        | false -> "[ ] "
-
-      TodoListItem(checkbox + item.Text, item.Completed))
+  let items = model.Items |> List.map (fun item -> NoteListItem item.Text)
 
   let listWidget =
     list items
@@ -361,7 +298,6 @@ let widget (model: Model) (isFocused: bool) : IWidget =
       | _, [] -> None
       | _ -> Some model.SelectedIndex
     )
-    |> withHighlightSymbol (LineExtensions.FromString("> ", Style Color.Green))
     |> wrapAround
     :> IWidget
 

@@ -13,6 +13,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="Clock.fs" />
+    <Compile Include="Str.fs" />
+    <Compile Include="Locking.fs" />
+    <Compile Include="Subs.fs" />
     <Compile Include="Config.fs" />
     <Compile Include="Git.fs" />
     <Compile Include="Session.fs" />
@@ -24,6 +28,7 @@
     <Compile Include="Dependencies.fs" />
     <Compile Include="Log.fs" />
     <Compile Include="Notes.fs" />
+    <Compile Include="NoteList.fs" />
     <Compile Include="TodoList.fs" />
     <Compile Include="BreakGame.fs" />
     <Compile Include="Notification.fs" />

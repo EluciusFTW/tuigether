@@ -124,10 +124,6 @@ let init (client: FirebaseClient) (user: string) () =
   },
   Cmd.map SessionListMsg listCmd
 
-let private subMap (wrap: 'a -> 'b) (subs: (string list * (Dispatch<'a> -> IDisposable)) list) =
-  subs
-  |> List.map (fun (key, start) -> key, (fun (dispatch: Dispatch<'b>) -> start (wrap >> dispatch)))
-
 let private handleSessionListOutMsg
   (client: FirebaseClient)
   (user: string)
@@ -170,7 +166,7 @@ let private leaveFinalizeCmd
                 Session.DriveEvent.Type = Session.DriveEventType.toString Session.DriveEventType.Paused
                 Session.DriveEvent.Driver = user
                 Session.DriveEvent.By = user
-                Session.DriveEvent.At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                Session.DriveEvent.At = Clock.nowMs ()
               }
           | false -> ()
         | false -> ()
@@ -258,8 +254,8 @@ let update (deps: Dependencies) (user: string) msg model =
 
 let subscriptions (model: Model) =
   match model.Page with
-  | SessionListPage -> SessionList.subscriptions model.SessionList |> subMap SessionListMsg
-  | SessionViewPage vm -> SessionView.subscriptions vm |> subMap SessionViewMsg
+  | SessionListPage -> SessionList.subscriptions model.SessionList |> Subs.map SessionListMsg
+  | SessionViewPage vm -> SessionView.subscriptions vm |> Subs.map SessionViewMsg
 
 type AppView(model: Model) =
   interface IWidget with
