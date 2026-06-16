@@ -28,6 +28,7 @@
     <Compile Include="Dependencies.fs" />
     <Compile Include="Log.fs" />
     <Compile Include="Notes.fs" />
+    <Compile Include="NoteList.fs" />
     <Compile Include="TodoList.fs" />
     <Compile Include="BreakGame.fs" />
     <Compile Include="Notification.fs" />

@@ -434,15 +434,6 @@ module Notes =
   let saveFreetext (client: FirebaseClient) (sessionId: string) (text: string) : Async<unit> =
     setValue ((notesPath client sessionId).Child "FreetextContent") text
 
-  let saveNoteMode (client: FirebaseClient) (sessionId: string) (mode: string) : Async<unit> =
-    setValue ((notesPath client sessionId).Child "NoteMode") mode
-
-  let addItem (client: FirebaseClient) (sessionId: string) (itemId: string) (text: string) : Async<unit> =
-    setValue ((notesPath client sessionId).Child("ListItems").Child itemId) text
-
-  let deleteItem (client: FirebaseClient) (sessionId: string) (itemId: string) : Async<unit> =
-    removeValue ((notesPath client sessionId).Child("ListItems").Child itemId)
-
   let saveLock (client: FirebaseClient) (sessionId: string) (owner: string) (lockedAt: int64) : Async<unit> =
     async {
       let node = notesPath client sessionId
@@ -466,25 +457,18 @@ module Notes =
         return Unchecked.defaultof<'T>
     }
 
-  // Load each field independently so a corrupted ListItems shape (e.g. legacy
-  // sessions where Firebase coerced integer-keyed dicts into JSON arrays) does
-  // not poison freetext and noteMode. ListItems just degrades to empty.
+  // Load each field independently so a corrupted field does not poison the
+  // others — each just degrades to its default.
   let load (client: FirebaseClient) (sessionId: string) : Async<Session.NotesState option> =
     async {
       try
         let! freetext = loadField<string> client sessionId "FreetextContent"
-        let! noteMode = loadField<string> client sessionId "NoteMode"
-
-        let! listItems = loadField<System.Collections.Generic.Dictionary<string, string>> client sessionId "ListItems"
-
         let! lockOwner = loadField<string> client sessionId "LockOwner"
         let! lockedAt = loadField<int64> client sessionId "LockedAt"
 
         return
           Some {
             FreetextContent = freetext
-            NoteMode = noteMode
-            ListItems = listItems
             LockOwner = lockOwner
             LockedAt = lockedAt
           }
@@ -496,6 +480,47 @@ module Notes =
     [ "notes-state"; sessionId ],
     fun dispatch ->
       subscribeReload (notesPath client sessionId) (fun () -> load client sessionId) (wrap >> dispatch) (fun _ -> ())
+  ]
+
+// ─── List ────────────────────────────────────────────────────────────────────
+
+module NoteList =
+
+  let private listPath (client: FirebaseClient) (sessionId: string) =
+    client.Child(sessionsPath).Child(sessionId).Child("widgetState").Child("list")
+
+  let addItem (client: FirebaseClient) (sessionId: string) (itemId: string) (text: string) : Async<unit> =
+    setValue ((listPath client sessionId).Child("Items").Child itemId) text
+
+  let deleteItem (client: FirebaseClient) (sessionId: string) (itemId: string) : Async<unit> =
+    removeValue ((listPath client sessionId).Child("Items").Child itemId)
+
+  // A corrupted Items shape (e.g. legacy sessions where Firebase coerced
+  // integer-keyed dicts into JSON arrays) degrades to an empty list.
+  let load (client: FirebaseClient) (sessionId: string) : Async<Session.ListState option> =
+    async {
+      try
+        let! items =
+          async {
+            try
+              let! result =
+                (listPath client sessionId).Child("Items").OnceSingleAsync<System.Collections.Generic.Dictionary<string, string>>()
+                |> Async.AwaitTask
+
+              return result
+            with _ ->
+              return Unchecked.defaultof<System.Collections.Generic.Dictionary<string, string>>
+          }
+
+        return Some { Items = items }
+      with _ ->
+        return None
+    }
+
+  let subscription (client: FirebaseClient) (sessionId: string) (wrap: Session.ListState option -> 'appMsg) = [
+    [ "list-state"; sessionId ],
+    fun dispatch ->
+      subscribeReload (listPath client sessionId) (fun () -> load client sessionId) (wrap >> dispatch) (fun _ -> ())
   ]
 
 // ─── Todo ────────────────────────────────────────────────────────────────────

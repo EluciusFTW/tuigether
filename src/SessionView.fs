@@ -21,6 +21,7 @@ type Model = {
   Status: string
   Focus: int
   Notes: Notes.Model
+  NoteList: NoteList.Model
   TodoList: TodoList.Model
   SessionInfo: SessionInfo.Model
   Journey: Journey.Model
@@ -34,6 +35,7 @@ type Msg =
   | StatusWritten
   | FocusPanel of int
   | NotesMsg of Notes.Msg
+  | NoteListMsg of NoteList.Msg
   | TodoListMsg of TodoList.Msg
   | SessionInfoMsg of SessionInfo.Msg
   | JourneyMsg of Journey.Msg
@@ -53,6 +55,7 @@ let init (client: FirebaseClient) (user: string) (avatarName: string) (sessionId
     Status = "joining…"
     Focus = 1
     Notes = Notes.init client sessionId user
+    NoteList = NoteList.init client sessionId
     TodoList = TodoList.init client sessionId
     SessionInfo = SessionInfo.init client sessionId user sessionData
     Journey = Journey.init client sessionId user avatarName sessionData
@@ -115,6 +118,9 @@ let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
   | NotesMsg nMsg ->
     let m, cmd = Notes.update nMsg model.Notes
     { model with Notes = m }, Cmd.map NotesMsg cmd, None
+  | NoteListMsg nMsg ->
+    let m, cmd = NoteList.update nMsg model.NoteList
+    { model with NoteList = m }, Cmd.map NoteListMsg cmd, None
   | TodoListMsg tMsg ->
     let m, cmd = TodoList.update tMsg model.TodoList
     { model with TodoList = m }, Cmd.map TodoListMsg cmd, None
@@ -150,6 +156,7 @@ let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
 
 let subscriptions (model: Model) =
   (Notes.subscriptions model.Notes |> Subs.map NotesMsg)
+  @ (NoteList.subscriptions model.NoteList |> Subs.map NoteListMsg)
   @ (TodoList.subscriptions model.TodoList |> Subs.map TodoListMsg)
   @ (Journey.subscriptions model.Journey |> Subs.map JourneyMsg)
   @ (DriveLog.subscriptions model.DriveLog |> Subs.map DriveLogMsg)
@@ -162,12 +169,12 @@ let private outerBindings: KeyBinding<Model, Msg> list = [
   })
   KeyBinding.dynamic (SpecialKey ConsoleKey.Tab) (fun model -> {
     Description = "next panel"
-    Message = Some(FocusPanel(model.Focus % 4 + 1))
+    Message = Some(FocusPanel(model.Focus % 5 + 1))
   })
   KeyBinding.create 'j' "journey log" ToggleDriveLog
 ]
 
-let private panelCount = 4
+let private panelCount = 5
 
 let private tryFocusNumber (key: ConsoleKeyInfo) =
   match key.KeyChar with
@@ -187,6 +194,7 @@ let capturesInput (model: Model) =
     | 1 -> SessionInfo.capturesInput model.SessionInfo
     | 2 -> Notes.capturesInput model.Notes
     | 3 -> TodoList.capturesInput model.TodoList
+    | 4 -> NoteList.capturesInput model.NoteList
     | _ -> false
 
 let private stageHelp (model: Model) =
@@ -241,6 +249,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | 1 -> SessionInfo.handleKey key model.SessionInfo |> Option.map SessionInfoMsg
     | 2 -> Notes.handleKey key model.Notes |> Option.map NotesMsg
     | 3 -> TodoList.handleKey key model.TodoList |> Option.map TodoListMsg
+    | 4 -> NoteList.handleKey key model.NoteList |> Option.map NoteListMsg
     | _ -> None
   | false ->
     GlobalKeys.handleKey (canFastForward model) (pauseHelp model) key
@@ -248,7 +257,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     |> Option.orElseWith (fun () -> tryFocusNumber key)
     |> Option.orElseWith (fun () ->
       match isShiftTab key with
-      | true -> Some(FocusPanel((model.Focus + 2) % 4 + 1))
+      | true -> Some(FocusPanel((model.Focus + 3) % 5 + 1))
       | false -> None)
     |> Option.orElseWith (fun () -> KeyBinding.handleKey outerBindings key model)
     |> Option.orElseWith (fun () ->
@@ -256,6 +265,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
       | 1 -> SessionInfo.handleKey key model.SessionInfo |> Option.map SessionInfoMsg
       | 2 -> Notes.handleKey key model.Notes |> Option.map NotesMsg
       | 3 -> TodoList.handleKey key model.TodoList |> Option.map TodoListMsg
+      | 4 -> NoteList.handleKey key model.NoteList |> Option.map NoteListMsg
       | _ -> None)
 
 let private shiftTabHelp: IKeyMap =
@@ -299,9 +309,13 @@ let private withPanelKeys (panelWidget: IWidget) (panelKeyMap: IKeyMap) (focused
         | false -> ()
   }
 
-let private topRowLayout =
-  layout "top-row"
-  |> splitVertically [| layout "notes" |> withRatio 1; layout "todo" |> withRatio 1 |]
+let private middleLayout =
+  layout "middle-area"
+  |> splitVertically [| layout "notes" |> withRatio 1; layout "right" |> withRatio 1 |]
+
+let private rightColumnLayout =
+  layout "right-column"
+  |> splitHorizontally [| layout "todo" |> withRatio 1; layout "list" |> withRatio 1 |]
 
 let private workAreaLayout =
   layout "work-area"
@@ -342,7 +356,7 @@ let widget (model: Model) : IWidget =
         ctx.Render(
           { new IWidget with
               member _.Render(ctx) =
-                let topPort = getPort ctx.Viewport topRowLayout
+                let midPort = getPort ctx.Viewport middleLayout
 
                 let notesFocusState =
                   match model.Focus, Notes.capturesInput model.Notes with
@@ -359,19 +373,39 @@ let widget (model: Model) : IWidget =
                       (Notes.widget model.Notes (model.Focus = 2))
                       (Notes.keyMap model.Notes)
                       (model.Focus = 2)),
-                  topPort "notes"
+                  midPort "notes"
                 )
 
                 ctx.Render(
-                  focusableBox
-                    "Todo"
-                    3
-                    (focusStateFor 3)
-                    (withPanelKeys
-                      (TodoList.widget model.TodoList (model.Focus = 3))
-                      (TodoList.keyMap model.TodoList)
-                      (model.Focus = 3)),
-                  topPort "todo"
+                  { new IWidget with
+                      member _.Render(ctx) =
+                        let rightPort = getPort ctx.Viewport rightColumnLayout
+
+                        ctx.Render(
+                          focusableBox
+                            "Todo"
+                            3
+                            (focusStateFor 3)
+                            (withPanelKeys
+                              (TodoList.widget model.TodoList (model.Focus = 3))
+                              (TodoList.keyMap model.TodoList)
+                              (model.Focus = 3)),
+                          rightPort "todo"
+                        )
+
+                        ctx.Render(
+                          focusableBox
+                            "List"
+                            4
+                            (focusStateFor 4)
+                            (withPanelKeys
+                              (NoteList.widget model.NoteList (model.Focus = 4))
+                              (NoteList.keyMap model.NoteList)
+                              (model.Focus = 4)),
+                          rightPort "list"
+                        )
+                  },
+                  midPort "right"
                 )
           },
           workPort "middle"
@@ -380,9 +414,9 @@ let widget (model: Model) : IWidget =
         ctx.Render(
           focusableBox
             "Journey and Passengers"
-            4
-            (focusStateFor 4)
-            (withPanelKeys (Journey.widget model.Journey) emptyKeyMap (model.Focus = 4)),
+            5
+            (focusStateFor 5)
+            (withPanelKeys (Journey.widget model.Journey) emptyKeyMap (model.Focus = 5)),
           workPort "journey"
         )
 
