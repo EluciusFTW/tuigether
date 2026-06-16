@@ -49,9 +49,7 @@ type NotesState = {
 }
 
 [<CLIMutable>]
-type ListState = {
-  Items: Dictionary<string, string>
-}
+type ListState = { Items: Dictionary<string, string> }
 
 [<CLIMutable>]
 type TimerState = {
@@ -104,10 +102,10 @@ module DriveEventType =
 
 [<CLIMutable>]
 type DriveEvent = {
-  Type: string    // DriveEventType
-  Driver: string  // driver this event concerns
-  By: string      // user who triggered the event
-  At: int64       // unix ms
+  Type: string // DriveEventType
+  Driver: string // driver this event concerns
+  By: string // user who triggered the event
+  At: int64 // unix ms
 }
 
 [<CLIMutable>]

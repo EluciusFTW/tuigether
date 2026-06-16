@@ -58,8 +58,7 @@ let private handleGlobalKey (key: ConsoleKeyInfo) : Msg option =
   Keymap.KeyBinding.handleKey globalBindings key ()
 
 // Not private: consumed by the AppView rendering module (help bar) and below.
-let globalKeyMap: IKeyMap =
-  Keymap.KeyBinding.toKeyMap globalBindings ()
+let globalKeyMap: IKeyMap = Keymap.KeyBinding.toKeyMap globalBindings ()
 
 // Not private: buildPanels drives both input routing (here) and rendering (AppView).
 let buildPanels (model: Model) : Panel list =

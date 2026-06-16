@@ -27,7 +27,10 @@ type Msg =
 let init (client: FirebaseClient) (sessionId: string) = {
   Events = []
   SelectedIndex = 0
-  Persistence = { Client = client; SessionId = sessionId }
+  Persistence = {
+    Client = client
+    SessionId = sessionId
+  }
 }
 
 let update msg model =
@@ -50,7 +53,13 @@ let update msg model =
           SelectedIndex = max 0 (events.Length - 1)
     },
     []
-  | RemoteLoaded None -> { model with Events = []; SelectedIndex = 0 }, []
+  | RemoteLoaded None ->
+    {
+      model with
+          Events = []
+          SelectedIndex = 0
+    },
+    []
   | Up ->
     {
       model with
@@ -290,7 +299,9 @@ let widget (model: Model) : IWidget =
     :> IWidget
 
   let hintWidget: IWidget =
-    paragraph [ Text.line [ Text.styledSpan (Nullable(Style Color.Grey)) "[↑/↓] scroll   [esc] close" ] ]
+    paragraph [
+      Text.line [ Text.styledSpan (Nullable(Style Color.Grey)) "[↑/↓] scroll   [esc] close" ]
+    ]
     |> withOverflow Overflow.Ellipsis
     :> IWidget
 

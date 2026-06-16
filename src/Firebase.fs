@@ -10,7 +10,10 @@ type Config = { Url: string; Secret: string }
 
 // A Firebase client paired with the session it's scoped to. Held by every per-session
 // component (Timer, Notes, TodoList, DriveLog, Journey) so they can issue writes/reads.
-type Persistence = { Client: FirebaseClient; SessionId: string }
+type Persistence = {
+  Client: FirebaseClient
+  SessionId: string
+}
 
 // Events emitted by the global sessions-list stream (used by SessionList).
 type SessionEvent =
@@ -135,11 +138,7 @@ module Sessions =
       try
         let! sessions = client.Child(sessionsPath).OnceAsync<Session.Data>() |> Async.AwaitTask
 
-        return
-          sessions
-          |> Seq.map (fun o -> o.Key, o.Object)
-          |> Seq.toList
-          |> Some
+        return sessions |> Seq.map (fun o -> o.Key, o.Object) |> Seq.toList |> Some
       with _ ->
         return None
     }
@@ -156,8 +155,8 @@ module Sessions =
         (client.Child(sessionsPath))
         (fun () -> loadAll client)
         (function
-          | Some sessions -> dispatch (wrap (SessionsLoaded sessions))
-          | None -> ())
+        | Some sessions -> dispatch (wrap (SessionsLoaded sessions))
+        | None -> ())
         (fun e -> dispatch (wrap (ConnectionError e)))
   ]
 
@@ -263,11 +262,8 @@ module Sessions =
   let dataSubscription (client: FirebaseClient) (sessionId: string) (wrap: Session.Data option -> 'appMsg) = [
     [ "session-data"; sessionId ],
     fun dispatch ->
-      subscribeReload
-        (sessionNode client sessionId)
-        (fun () -> loadData client sessionId)
-        (wrap >> dispatch)
-        (fun _ -> ())
+      subscribeReload (sessionNode client sessionId) (fun () -> loadData client sessionId) (wrap >> dispatch) (fun _ ->
+        ())
   ]
 
 // ─── Connected users (Avatar) ────────────────────────────────────────────────
@@ -504,7 +500,9 @@ module NoteList =
           async {
             try
               let! result =
-                (listPath client sessionId).Child("Items").OnceSingleAsync<System.Collections.Generic.Dictionary<string, string>>()
+                (listPath client sessionId)
+                  .Child("Items")
+                  .OnceSingleAsync<System.Collections.Generic.Dictionary<string, string>>()
                 |> Async.AwaitTask
 
               return result
@@ -647,7 +645,11 @@ module History =
   // Append-only: PostAsync mints a chronological push key per event, so the log
   // preserves order and never overwrites prior entries.
   let append (client: FirebaseClient) (sessionId: string) (event: Session.DriveEvent) : Async<unit> =
-    swallow ((historyPath client sessionId).PostAsync(box event) |> Async.AwaitTask |> Async.Ignore)
+    swallow (
+      (historyPath client sessionId).PostAsync(box event)
+      |> Async.AwaitTask
+      |> Async.Ignore
+    )
 
   // The whole log is a dictionary of pushKey -> event; push keys sort chronologically.
   let load
@@ -677,5 +679,6 @@ module History =
     [
       [ "drive-history"; sessionId ],
       fun dispatch ->
-        subscribeReload (historyPath client sessionId) (fun () -> load client sessionId) (wrap >> dispatch) (fun _ -> ())
+        subscribeReload (historyPath client sessionId) (fun () -> load client sessionId) (wrap >> dispatch) (fun _ ->
+          ())
     ]

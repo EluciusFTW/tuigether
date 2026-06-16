@@ -105,7 +105,8 @@ let resetForDriver (previous: Model) (driver: string option) (users: string list
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
 
-let private nowMs () = Clock.nowMs ()
+let private nowMs () =
+  Clock.nowMs ()
 
 let private toTimerState (model: Model) : Session.TimerState = {
   RemainingSeconds = int model.Remaining.TotalSeconds
@@ -403,9 +404,11 @@ let private pauseLines =
   let e = emptyBlock
   let P = styledBlock Color.DeepSkyBlue1
 
-  [ Text.line [ e; P; P; e; P; P ]
+  [
     Text.line [ e; P; P; e; P; P ]
-    Text.line [ e; P; P; e; P; P ] ]
+    Text.line [ e; P; P; e; P; P ]
+    Text.line [ e; P; P; e; P; P ]
+  ]
 
 let widget (model: Model) : IWidget =
   { new IWidget with
@@ -419,9 +422,7 @@ let widget (model: Model) : IWidget =
         | _ ->
           let roadWidth = max carWidth (context.Viewport.Width / 2)
 
-          let driverColor =
-            model.ActiveDriver
-            |> Option.bind (fun u -> model.UserAvatars |> Map.tryFind u)
+          let driverColor = model.ActiveDriver |> Option.bind (fun u -> model.UserAvatars |> Map.tryFind u)
 
           let filledColor =
             match model.State with

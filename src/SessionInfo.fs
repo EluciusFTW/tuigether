@@ -81,7 +81,8 @@ type Msg =
 let private goalDebounceMs = 300
 let private autoExitInsertMs = 30_000
 
-let private nowMs () : int64 = Clock.nowMs ()
+let private nowMs () : int64 =
+  Clock.nowMs ()
 
 let private isLockedByOther (model: Model) =
   Locking.heldByOther (nowMs ()) model.User model.Lock

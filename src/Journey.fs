@@ -11,9 +11,16 @@ open SpectreTuff.Layout
 open SpectreTuff.Widgets
 
 let private avatarColors = [|
-  Color.Green; Color.Blue; Color.Purple; Color.Aqua
-  Color.Red; Color.Yellow; Color.Orange1; Color.Fuchsia
-  Color.Maroon; Color.SkyBlue1
+  Color.Green
+  Color.Blue
+  Color.Purple
+  Color.Aqua
+  Color.Red
+  Color.Yellow
+  Color.Orange1
+  Color.Fuchsia
+  Color.Maroon
+  Color.SkyBlue1
 |]
 
 let private colorByName (name: string) =
@@ -22,7 +29,9 @@ let private colorByName (name: string) =
   | false -> avatarColors.[abs (name.GetHashCode()) % avatarColors.Length]
 
 let resolveName () =
-  Environment.GetEnvironmentVariable("TUIGETHER_AVATAR") |> Option.ofObj |> Option.defaultValue ""
+  Environment.GetEnvironmentVariable("TUIGETHER_AVATAR")
+  |> Option.ofObj
+  |> Option.defaultValue ""
 
 type User = { Name: string; Color: Color }
 

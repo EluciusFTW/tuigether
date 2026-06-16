@@ -243,30 +243,30 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | _ -> None
   | false ->
 
-  match capturesInput model with
-  | true ->
-    match model.Focus with
-    | 1 -> SessionInfo.handleKey key model.SessionInfo |> Option.map SessionInfoMsg
-    | 2 -> Notes.handleKey key model.Notes |> Option.map NotesMsg
-    | 3 -> TodoList.handleKey key model.TodoList |> Option.map TodoListMsg
-    | 4 -> NoteList.handleKey key model.NoteList |> Option.map NoteListMsg
-    | _ -> None
-  | false ->
-    GlobalKeys.handleKey (canFastForward model) (pauseHelp model) key
-    |> Option.map (globalKeyToMsg model)
-    |> Option.orElseWith (fun () -> tryFocusNumber key)
-    |> Option.orElseWith (fun () ->
-      match isShiftTab key with
-      | true -> Some(FocusPanel((model.Focus + 3) % 5 + 1))
-      | false -> None)
-    |> Option.orElseWith (fun () -> KeyBinding.handleKey outerBindings key model)
-    |> Option.orElseWith (fun () ->
+    match capturesInput model with
+    | true ->
       match model.Focus with
       | 1 -> SessionInfo.handleKey key model.SessionInfo |> Option.map SessionInfoMsg
       | 2 -> Notes.handleKey key model.Notes |> Option.map NotesMsg
       | 3 -> TodoList.handleKey key model.TodoList |> Option.map TodoListMsg
       | 4 -> NoteList.handleKey key model.NoteList |> Option.map NoteListMsg
-      | _ -> None)
+      | _ -> None
+    | false ->
+      GlobalKeys.handleKey (canFastForward model) (pauseHelp model) key
+      |> Option.map (globalKeyToMsg model)
+      |> Option.orElseWith (fun () -> tryFocusNumber key)
+      |> Option.orElseWith (fun () ->
+        match isShiftTab key with
+        | true -> Some(FocusPanel((model.Focus + 3) % 5 + 1))
+        | false -> None)
+      |> Option.orElseWith (fun () -> KeyBinding.handleKey outerBindings key model)
+      |> Option.orElseWith (fun () ->
+        match model.Focus with
+        | 1 -> SessionInfo.handleKey key model.SessionInfo |> Option.map SessionInfoMsg
+        | 2 -> Notes.handleKey key model.Notes |> Option.map NotesMsg
+        | 3 -> TodoList.handleKey key model.TodoList |> Option.map TodoListMsg
+        | 4 -> NoteList.handleKey key model.NoteList |> Option.map NoteListMsg
+        | _ -> None)
 
 let private shiftTabHelp: IKeyMap =
   { new IKeyMap with

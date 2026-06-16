@@ -25,7 +25,8 @@ module Slot =
     | Help -> "help"
     | PanelInner -> "panel-inner"
 
-let private named slot = layout (Slot.name slot)
+let private named slot =
+  layout (Slot.name slot)
 
 let panelInnerLayout =
   named PanelInner
