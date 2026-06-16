@@ -36,7 +36,7 @@ type Msg =
 type Panel = {
   Number: int
   Title: string
-  LayoutSlot: string
+  LayoutSlot: AppLayout.Slot
   Focused: bool
   Boxed: bool
   CapturesInput: bool
@@ -48,33 +48,18 @@ type Panel = {
 
 let exitEvent = new Threading.ManualResetEventSlim false
 
-let private panelInnerLayout =
-  layout "panel-inner"
-  |> splitHorizontally [| layout "content"; layout "keys" |> withFixedSize (Some 1) |]
+// The global keys' behavior and their help-bar documentation are derived from a single
+// binding list, so a key and its description can never drift apart.
+let private globalBindings: Keymap.KeyBinding<unit, Msg> list = [
+  Keymap.KeyBinding.create 'q' "quit" Exit
+  Keymap.KeyBinding.create 'l' "toggle log" ToggleLog
+]
 
-let private mainLayout (logVisible: bool) =
-  layout "main"
-  |> splitHorizontally [|
-    layout "top"
-    |> splitVertically [|
-      layout "content" |> withRatio 3
-      layout "log"
-      |> withRatio 1
-      |> (match logVisible with
-          | true -> show
-          | false -> hide)
-    |]
-    layout "help" |> withFixedSize (Some 1)
-  |]
+let private handleGlobalKey (key: ConsoleKeyInfo) : Msg option =
+  Keymap.KeyBinding.handleKey globalBindings key ()
 
 let private globalKeyMap: IKeyMap =
-  { new IKeyMap with
-      member _.Help() =
-        seq {
-          KeyBinding(Keys = ResizeArray [ KeyPress.For 'q' ], Help = "quit")
-          KeyBinding(Keys = ResizeArray [ KeyPress.For 'l' ], Help = "toggle log")
-        }
-  }
+  Keymap.KeyBinding.toKeyMap globalBindings ()
 
 let private buildPanels (model: Model) : Panel list =
   match model.Page with
@@ -82,7 +67,7 @@ let private buildPanels (model: Model) : Panel list =
       {
         Number = 1
         Title = "Sessions"
-        LayoutSlot = "content"
+        LayoutSlot = AppLayout.Content
         Focused = model.Focus = 1
         Boxed = true
         CapturesInput = SessionList.capturesInput model.SessionList
@@ -96,7 +81,7 @@ let private buildPanels (model: Model) : Panel list =
       {
         Number = 1
         Title = "Session"
-        LayoutSlot = "content"
+        LayoutSlot = AppLayout.Content
         Focused = model.Focus = 1
         Boxed = false
         CapturesInput = SessionView.capturesInput viewModel
@@ -204,10 +189,9 @@ let update (deps: Dependencies) (user: string) msg model =
       |> Option.map (fun msg -> model, Cmd.ofMsg msg)
       |> Option.defaultValue (model, [])
     | false ->
-      match key.Key with
-      | ConsoleKey.Q -> model, Cmd.ofMsg Exit
-      | ConsoleKey.L -> model, Cmd.ofMsg ToggleLog
-      | _ ->
+      match handleGlobalKey key with
+      | Some msg -> model, Cmd.ofMsg msg
+      | None ->
         focusedPanel
         |> Option.bind (fun p -> p.HandleKey key)
         |> Option.map (fun msg -> model, Cmd.ofMsg msg)
@@ -261,7 +245,7 @@ type AppView(model: Model) =
   interface IWidget with
     member _.Render(ctx: RenderContext) =
       let panels = buildPanels model
-      let slotPort = getPort ctx.Viewport (mainLayout model.LogVisible)
+      let slotPort = AppLayout.portFor ctx.Viewport (AppLayout.mainLayout model.LogVisible)
 
       for panel in panels do
         let composedWidget =
@@ -269,9 +253,9 @@ type AppView(model: Model) =
               member _.Render(ctx) =
                 match panel.Boxed with
                 | true ->
-                  let port = getPort ctx.Viewport panelInnerLayout
-                  ctx.Render(panel.Widget, port "content")
-                  ctx.Render(help [ panel.KeyMap ] |> leftAligned, port "keys")
+                  let port = AppLayout.portFor ctx.Viewport AppLayout.panelInnerLayout
+                  ctx.Render(panel.Widget, port AppLayout.Content)
+                  ctx.Render(help [ panel.KeyMap ] |> leftAligned, port AppLayout.Keys)
                 | false -> ctx.Render(panel.Widget, ctx.Viewport)
           }
 
@@ -290,7 +274,7 @@ type AppView(model: Model) =
         ctx.Render(renderedPanel, slotPort panel.LayoutSlot)
 
       match model.LogVisible with
-      | true -> Log.view model.LogModel ctx (slotPort "log")
+      | true -> Log.view model.LogModel ctx (slotPort AppLayout.Log)
       | false -> ()
 
       let helpMaps =
@@ -301,7 +285,7 @@ type AppView(model: Model) =
           @ [ globalKeyMap ]
         | _ -> [ globalKeyMap ]
 
-      ctx.Render(help helpMaps |> leftAligned, slotPort "help")
+      ctx.Render(help helpMaps |> leftAligned, slotPort AppLayout.Help)
 
 // Spectre.Tui's AnsiTerminal keeps mutable buffer/state shared across writes
 // and is not thread-safe. Subscription callbacks (Firebase observables, async
