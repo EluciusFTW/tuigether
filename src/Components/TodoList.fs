@@ -14,6 +14,9 @@ type InputMode =
   // Carries the live editor while adding, so it owns the caret and does all
   // at-cursor editing; the item text is read back from it on confirm.
   | AddingItem of TextBoxWidget
+  // Carries the edited item's Id plus a live editor seeded with its current
+  // text; on confirm the text is read back and written to that item.
+  | EditingItem of id: string * editor: TextBoxWidget
 
 // Items carry their Firebase push-ID so toggles and deletes target a stable key
 // and concurrent multi-user edits do not collide.
@@ -34,9 +37,11 @@ type Msg =
   | Up
   | Down
   | StartAdd
+  | StartEdit
   | Edit of TextEditing.EditAction
   | ConfirmAdd
   | CancelAdd
+  | ConfirmEdit
   | Toggle
   | Delete
   | MoveUp
@@ -48,6 +53,7 @@ let private normalBindings: KeyBinding<Model, Msg> list = [
   KeyBinding.createSpecial ConsoleKey.UpArrow "up" Up
   KeyBinding.createSpecial ConsoleKey.DownArrow "down" Down
   KeyBinding.create 'a' "add" StartAdd
+  KeyBinding.create 'e' "edit" StartEdit
   KeyBinding.create ' ' "toggle" Toggle
   KeyBinding.create 'x' "delete" Delete
   KeyBinding.create 'u' "move up" MoveUp
@@ -59,12 +65,22 @@ let private addingItemBindings: KeyBinding<Model, Msg> list = [
   KeyBinding.createSpecial ConsoleKey.Escape "cancel" CancelAdd
 ]
 
+let private editingItemBindings: KeyBinding<Model, Msg> list = [
+  KeyBinding.createSpecial ConsoleKey.Enter "save" ConfirmEdit
+  KeyBinding.createSpecial ConsoleKey.Escape "save & close" ConfirmEdit
+]
+
 let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
   match model.InputMode with
   | AddingItem _ ->
     match key.Key with
     | ConsoleKey.Escape -> Some CancelAdd
     | ConsoleKey.Enter -> Some ConfirmAdd
+    | _ -> TextEditing.keyToAction false key |> Option.map Edit
+  | EditingItem _ ->
+    match key.Key with
+    | ConsoleKey.Escape -> Some ConfirmEdit
+    | ConsoleKey.Enter -> Some ConfirmEdit
     | _ -> TextEditing.keyToAction false key |> Option.map Edit
   | Normal ->
     match key.Key with
@@ -73,6 +89,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | _ ->
       match key.KeyChar with
       | 'a' -> Some StartAdd
+      | 'e' -> Some StartEdit
       | ' ' -> Some Toggle
       | 'x' -> Some Delete
       | 'u' -> Some MoveUp
@@ -83,13 +100,15 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
 
 let capturesInput (model: Model) =
   match model.InputMode with
-  | AddingItem _ -> true
+  | AddingItem _
+  | EditingItem _ -> true
   | Normal -> false
 
 let keyMap (model: Model) =
   let bindings =
     match model.InputMode with
     | AddingItem _ -> addingItemBindings
+    | EditingItem _ -> editingItemBindings
     | Normal -> normalBindings
 
   KeyBinding.toKeyMap bindings model
@@ -190,9 +209,23 @@ let update msg model =
       |> focused
 
     { model with InputMode = AddingItem editor }, []
+  | StartEdit ->
+    match model.Items with
+    | [] -> model, []
+    | _ ->
+      let item = model.Items.[model.SelectedIndex]
+
+      let editor =
+        textBox item.Text
+        |> withMode TextBoxMode.SingleLine
+        |> focused
+
+      editor.MoveToEnd()
+      { model with InputMode = EditingItem(item.Id, editor) }, []
   | Edit action ->
     match model.InputMode with
-    | AddingItem editor ->
+    | AddingItem editor
+    | EditingItem(_, editor) ->
       TextEditing.apply action editor
       model, []
     | Normal -> model, []
@@ -221,8 +254,34 @@ let update msg model =
       }
 
       updated, addItemCmd updated newItem
-    | Normal -> model, []
+    | _ -> model, []
   | CancelAdd -> { model with InputMode = Normal }, []
+  | ConfirmEdit ->
+    match model.InputMode with
+    | EditingItem(id, editor) ->
+      // Blank edits are ignored so an accidental clear can't wipe an item; the
+      // original text stays put.
+      match editor.Text.Trim() with
+      | "" -> { model with InputMode = Normal }, []
+      | newText ->
+        let newItems =
+          model.Items
+          |> List.map (fun it ->
+            match it.Id = id with
+            | true -> { it with Text = newText }
+            | false -> it)
+
+        let updated = {
+          model with
+              Items = newItems
+              InputMode = Normal
+        }
+
+        // The item can vanish mid-edit if another user deletes it; skip the write.
+        match newItems |> List.tryFind (fun it -> it.Id = id) with
+        | Some edited -> updated, setItemCmd updated edited
+        | None -> updated, []
+    | _ -> model, []
   | Toggle ->
     match model.Items with
     | [] -> model, []
@@ -359,18 +418,21 @@ let widget (model: Model) (isFocused: bool) : IWidget =
     |> wrapAround
     :> IWidget
 
-  match model.InputMode with
-  | AddingItem editor ->
+  let editorPopup (title: string) (editor: TextBoxWidget) =
     { new IWidget with
         member _.Render(ctx) =
           ctx.Render(listWidget)
 
           let boxedInput =
             box (Look.fromColor Color.Green)
-            |> withTitle "New item"
+            |> withTitle title
             |> withInnerWidget (editor :> IWidget)
             :> IWidget
 
           ctx.Render(popup 44 3 |> withPopupContent boxedInput :> IWidget)
     }
+
+  match model.InputMode with
+  | AddingItem editor -> editorPopup "New item" editor
+  | EditingItem(_, editor) -> editorPopup "Edit item" editor
   | Normal -> listWidget
