@@ -31,13 +31,7 @@ type Msg =
   | Down
   | OpenSelected
   | BeginNaming
-  | TypeChar of char
-  | TypeBackspace
-  | TypeDelete
-  | CaretLeft
-  | CaretRight
-  | CaretHome
-  | CaretEnd
+  | Edit of TextEditing.EditAction
   | ConfirmName
   | CancelNaming
   | DeleteSelected
@@ -84,16 +78,6 @@ let private isDuplicateTitle (model: Model) (title: string) =
       not (isNull data.Title)
       && String.Equals(data.Title.Trim(), title, StringComparison.OrdinalIgnoreCase))
 
-// Apply an at-caret action to the live naming editor and clear any stale
-// validation error. The title is read back from the editor only on confirm;
-// Elmish re-renders after every message, so the mutated editor shows at once.
-let private withEditor (action: TextBoxWidget -> unit) (model: Model) : Model * Cmd<Msg> * OutMsg option =
-  match model.InputMode with
-  | Naming(editor, _) ->
-    action editor
-    { model with InputMode = Naming(editor, None) }, [], None
-  | Browsing -> model, [], None
-
 let update msg model : Model * Cmd<Msg> * OutMsg option =
   match msg with
   | Up ->
@@ -129,13 +113,12 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
     },
     [],
     None
-  | TypeChar c -> model |> withEditor (fun editor -> editor.Insert(string c))
-  | TypeBackspace -> model |> withEditor (fun editor -> editor.DeleteBackward())
-  | TypeDelete -> model |> withEditor (fun editor -> editor.DeleteForward())
-  | CaretLeft -> model |> withEditor (fun editor -> editor.MoveLeft())
-  | CaretRight -> model |> withEditor (fun editor -> editor.MoveRight())
-  | CaretHome -> model |> withEditor (fun editor -> editor.MoveHome())
-  | CaretEnd -> model |> withEditor (fun editor -> editor.MoveEnd())
+  | Edit action ->
+    match model.InputMode with
+    | Naming(editor, _) ->
+      TextEditing.apply action editor
+      { model with InputMode = Naming(editor, None) }, [], None
+    | Browsing -> model, [], None
   | ConfirmName ->
     match model.InputMode with
     | Naming(editor, _) ->
@@ -280,14 +263,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     match key.Key with
     | ConsoleKey.Escape -> Some CancelNaming
     | ConsoleKey.Enter -> Some ConfirmName
-    | ConsoleKey.LeftArrow -> Some CaretLeft
-    | ConsoleKey.RightArrow -> Some CaretRight
-    | ConsoleKey.Home -> Some CaretHome
-    | ConsoleKey.End -> Some CaretEnd
-    | ConsoleKey.Backspace -> Some TypeBackspace
-    | ConsoleKey.Delete -> Some TypeDelete
-    | _ when not (Char.IsControl key.KeyChar) -> Some(TypeChar key.KeyChar)
-    | _ -> None
+    | _ -> TextEditing.keyToAction false key |> Option.map Edit
   | Browsing -> KeyBinding.handleKey browsingBindings key model
 
 let keyMap (model: Model) =

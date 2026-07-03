@@ -59,16 +59,7 @@ type Model = {
 type Msg =
   | EnterInsert
   | ExitInsert
-  | TypeChar of char
-  | TypeBackspace
-  | TypeDelete
-  | TypeNewLine
-  | CaretLeft
-  | CaretRight
-  | CaretUp
-  | CaretDown
-  | CaretHome
-  | CaretEnd
+  | Edit of TextEditing.EditAction
   | MaybeSaveGoal of int
   | MaybeAutoExitInsert of int
   | SessionDataUpdated of Session.Data
@@ -246,17 +237,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
   | Insert ->
     match key.Key with
     | ConsoleKey.Escape -> Some ExitInsert
-    | ConsoleKey.LeftArrow -> Some CaretLeft
-    | ConsoleKey.RightArrow -> Some CaretRight
-    | ConsoleKey.UpArrow -> Some CaretUp
-    | ConsoleKey.DownArrow -> Some CaretDown
-    | ConsoleKey.Home -> Some CaretHome
-    | ConsoleKey.End -> Some CaretEnd
-    | ConsoleKey.Backspace -> Some TypeBackspace
-    | ConsoleKey.Delete -> Some TypeDelete
-    | ConsoleKey.Enter -> Some TypeNewLine
-    | _ when not (Char.IsControl key.KeyChar) -> Some(TypeChar key.KeyChar)
-    | _ -> None
+    | _ -> TextEditing.keyToAction true key |> Option.map Edit
   | Normal ->
     match key.KeyChar with
     | 'i' -> Some EnterInsert
@@ -265,18 +246,11 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | 'w' when isRepoOK model && model.LocalGitBranch = model.GitBranch -> Some BeginWipSync
     | _ -> None
   | GoalPopup ->
-    // Single-line: no Up/Down/newline; Enter closes.
+    // Single-line: Enter and Escape both close.
     match key.Key with
     | ConsoleKey.Escape -> Some CloseGoalPopup
     | ConsoleKey.Enter -> Some CloseGoalPopup
-    | ConsoleKey.LeftArrow -> Some CaretLeft
-    | ConsoleKey.RightArrow -> Some CaretRight
-    | ConsoleKey.Home -> Some CaretHome
-    | ConsoleKey.End -> Some CaretEnd
-    | ConsoleKey.Backspace -> Some TypeBackspace
-    | ConsoleKey.Delete -> Some TypeDelete
-    | _ when not (Char.IsControl key.KeyChar) -> Some(TypeChar key.KeyChar)
-    | _ -> None
+    | _ -> TextEditing.keyToAction false key |> Option.map Edit
   | BranchPopup { Stage = EditingName _ } ->
     match key.Key with
     | ConsoleKey.Escape -> Some DismissBranchPopup
@@ -388,35 +362,6 @@ let private saveGitBranchCmd (model: Model) (branch: string) : Cmd<Msg> =
 
 let private goalLook = Look.fromColor Color.Yellow |> Look.withDecorations [ Decoration.Italic ]
 
-// Apply an at-caret edit to the live goal editor, sync the content back for
-// persistence, and schedule the debounced save plus the idle auto-exit.
-let private editWith (mutate: TextBoxWidget -> unit) (model: Model) : Model * Cmd<Msg> =
-  match model.Editor with
-  | None -> model, []
-  | Some editor ->
-    mutate editor
-    let bumped = model.GoalSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
-
-    let updated = {
-      model with
-          GoalContent = editor.Text
-          GoalSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
-
-    updated, Cmd.batch [ scheduleGoalSave bumped; scheduleAutoExit activityToken ]
-
-// Move the caret. Content is unchanged (no save), but it counts as activity so
-// the idle auto-exit timer is refreshed.
-let private moveCaret (mutate: TextBoxWidget -> unit) (model: Model) : Model * Cmd<Msg> =
-  match model.Editor with
-  | None -> model, []
-  | Some editor ->
-    mutate editor
-    let activityToken = model.InsertActivityToken + 1
-    { model with InsertActivityToken = activityToken }, scheduleAutoExit activityToken
-
 let update msg model =
   match msg with
   | EnterInsert ->
@@ -471,16 +416,28 @@ let update msg model =
 
       updated, Cmd.batch [ saveGoalCmd updated; releaseGoalLockCmd updated ]
     | _ -> model, []
-  | TypeChar c -> model |> editWith (fun editor -> editor.Insert(string c))
-  | TypeBackspace -> model |> editWith (fun editor -> editor.DeleteBackward())
-  | TypeDelete -> model |> editWith (fun editor -> editor.DeleteForward())
-  | TypeNewLine -> model |> editWith (fun editor -> editor.InsertNewLine())
-  | CaretLeft -> model |> moveCaret (fun editor -> editor.MoveLeft())
-  | CaretRight -> model |> moveCaret (fun editor -> editor.MoveRight())
-  | CaretUp -> model |> moveCaret (fun editor -> editor.MoveUp())
-  | CaretDown -> model |> moveCaret (fun editor -> editor.MoveDown())
-  | CaretHome -> model |> moveCaret (fun editor -> editor.MoveHome())
-  | CaretEnd -> model |> moveCaret (fun editor -> editor.MoveEnd())
+  | Edit action ->
+    match model.Editor with
+    | None -> model, []
+    | Some editor ->
+      TextEditing.apply action editor
+      let activityToken = model.InsertActivityToken + 1
+
+      // Text edits sync back for persistence and schedule a debounced save; pure
+      // caret moves only refresh the idle auto-exit timer.
+      match TextEditing.isMutation action with
+      | true ->
+        let bumped = model.GoalSaveToken + 1
+
+        let updated = {
+          model with
+              GoalContent = editor.Text
+              GoalSaveToken = bumped
+              InsertActivityToken = activityToken
+        }
+
+        updated, Cmd.batch [ scheduleGoalSave bumped; scheduleAutoExit activityToken ]
+      | false -> { model with InsertActivityToken = activityToken }, scheduleAutoExit activityToken
   | MaybeSaveGoal token ->
     match token = model.GoalSaveToken with
     | true ->

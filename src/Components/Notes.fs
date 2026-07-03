@@ -30,16 +30,7 @@ type Model = {
 type Msg =
   | EnterInsert
   | ExitInsert
-  | TypeChar of char
-  | TypeBackspace
-  | TypeDelete
-  | TypeNewLine
-  | CaretLeft
-  | CaretRight
-  | CaretUp
-  | CaretDown
-  | CaretHome
-  | CaretEnd
+  | Edit of TextEditing.EditAction
   | MaybeSaveFreetext of int
   | MaybeAutoExitInsert of int
   | RemoteStateLoaded of Session.NotesState option
@@ -82,22 +73,11 @@ let private normalBindings: KeyBinding<Model, Msg> list = [
 let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
   match model.InputMode with
   | Insert ->
+    // keyToAction drops control keys such as Tab (whose literal insertion garbled
+    // the editor); Escape stays here so it can exit insert mode.
     match key.Key with
     | ConsoleKey.Escape -> Some ExitInsert
-    | ConsoleKey.LeftArrow -> Some CaretLeft
-    | ConsoleKey.RightArrow -> Some CaretRight
-    | ConsoleKey.UpArrow -> Some CaretUp
-    | ConsoleKey.DownArrow -> Some CaretDown
-    | ConsoleKey.Home -> Some CaretHome
-    | ConsoleKey.End -> Some CaretEnd
-    | ConsoleKey.Backspace -> Some TypeBackspace
-    | ConsoleKey.Delete -> Some TypeDelete
-    | ConsoleKey.Enter -> Some TypeNewLine
-    // Only insert genuinely printable characters. This drops control keys such
-    // as Tab ('\t'), whose literal insertion garbled the editor, along with the
-    // null char produced by unhandled navigation keys.
-    | _ when not (Char.IsControl key.KeyChar) -> Some(TypeChar key.KeyChar)
-    | _ -> None
+    | _ -> TextEditing.keyToAction true key |> Option.map Edit
   | Normal ->
     match key.KeyChar with
     | 'i' -> Some EnterInsert
@@ -163,35 +143,6 @@ let private releaseLockCmd (model: Model) : Cmd<Msg> =
     (fun () -> Firebase.Notes.releaseLock model.Persistence.Client model.Persistence.SessionId)
     ()
     (fun () -> StateSaved)
-
-// Apply an at-caret edit to the live editor, sync the content back for
-// persistence, and schedule the debounced save plus the idle auto-exit.
-let private editWith (mutate: TextBoxWidget -> unit) (model: Model) : Model * Cmd<Msg> =
-  match model.Editor with
-  | None -> model, []
-  | Some editor ->
-    mutate editor
-    let bumped = model.FreetextSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
-
-    let updated = {
-      model with
-          FreetextContent = editor.Text
-          FreetextSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
-
-    updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
-
-// Move the caret. Content is unchanged (no save), but it counts as activity so
-// the idle auto-exit timer is refreshed.
-let private moveCaret (mutate: TextBoxWidget -> unit) (model: Model) : Model * Cmd<Msg> =
-  match model.Editor with
-  | None -> model, []
-  | Some editor ->
-    mutate editor
-    let activityToken = model.InsertActivityToken + 1
-    { model with InsertActivityToken = activityToken }, scheduleAutoExit activityToken
 
 let update msg model =
   match msg with
@@ -259,16 +210,28 @@ let update msg model =
       | false -> []
 
     updated, Cmd.batch cmds
-  | TypeChar c -> model |> editWith (fun editor -> editor.Insert(string c))
-  | TypeBackspace -> model |> editWith (fun editor -> editor.DeleteBackward())
-  | TypeDelete -> model |> editWith (fun editor -> editor.DeleteForward())
-  | TypeNewLine -> model |> editWith (fun editor -> editor.InsertNewLine())
-  | CaretLeft -> model |> moveCaret (fun editor -> editor.MoveLeft())
-  | CaretRight -> model |> moveCaret (fun editor -> editor.MoveRight())
-  | CaretUp -> model |> moveCaret (fun editor -> editor.MoveUp())
-  | CaretDown -> model |> moveCaret (fun editor -> editor.MoveDown())
-  | CaretHome -> model |> moveCaret (fun editor -> editor.MoveHome())
-  | CaretEnd -> model |> moveCaret (fun editor -> editor.MoveEnd())
+  | Edit action ->
+    match model.Editor with
+    | None -> model, []
+    | Some editor ->
+      TextEditing.apply action editor
+      let activityToken = model.InsertActivityToken + 1
+
+      // Text edits sync back for persistence and schedule a debounced save; pure
+      // caret moves only refresh the idle auto-exit timer.
+      match TextEditing.isMutation action with
+      | true ->
+        let bumped = model.FreetextSaveToken + 1
+
+        let updated = {
+          model with
+              FreetextContent = editor.Text
+              FreetextSaveToken = bumped
+              InsertActivityToken = activityToken
+        }
+
+        updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
+      | false -> { model with InsertActivityToken = activityToken }, scheduleAutoExit activityToken
   | RemoteStateLoaded(Some state) ->
     // While the user is actively typing, ignore the freetext echo from the
     // remote — applying it would clobber characters typed since the in-flight

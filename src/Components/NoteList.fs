@@ -31,13 +31,7 @@ type Msg =
   | Up
   | Down
   | StartAdd
-  | TypeChar of char
-  | TypeBackspace
-  | TypeDelete
-  | CaretLeft
-  | CaretRight
-  | CaretHome
-  | CaretEnd
+  | Edit of TextEditing.EditAction
   | ConfirmAdd
   | CancelAdd
   | Delete
@@ -64,14 +58,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     match key.Key with
     | ConsoleKey.Escape -> Some CancelAdd
     | ConsoleKey.Enter -> Some ConfirmAdd
-    | ConsoleKey.LeftArrow -> Some CaretLeft
-    | ConsoleKey.RightArrow -> Some CaretRight
-    | ConsoleKey.Home -> Some CaretHome
-    | ConsoleKey.End -> Some CaretEnd
-    | ConsoleKey.Backspace -> Some TypeBackspace
-    | ConsoleKey.Delete -> Some TypeDelete
-    | _ when not (Char.IsControl key.KeyChar) -> Some(TypeChar key.KeyChar)
-    | _ -> None
+    | _ -> TextEditing.keyToAction false key |> Option.map Edit
   | Normal ->
     match key.Key with
     | ConsoleKey.UpArrow -> Some Up
@@ -163,16 +150,6 @@ let private deleteItemCmd (model: Model) (itemId: string) : Cmd<Msg> =
     ()
     (fun () -> StateSaved)
 
-// Apply an at-caret action to the live add-item editor. Content is read back
-// from the editor only on confirm; Elmish re-renders after every message, so
-// the mutated editor is shown immediately.
-let private withEditor (action: TextBoxWidget -> unit) (model: Model) : Model * Cmd<Msg> =
-  match model.InputMode with
-  | AddingItem editor ->
-    action editor
-    model, []
-  | Normal -> model, []
-
 let update msg model =
   match msg with
   | Up ->
@@ -205,13 +182,12 @@ let update msg model =
       |> focused
 
     { model with InputMode = AddingItem editor }, []
-  | TypeChar c -> model |> withEditor (fun editor -> editor.Insert(string c))
-  | TypeBackspace -> model |> withEditor (fun editor -> editor.DeleteBackward())
-  | TypeDelete -> model |> withEditor (fun editor -> editor.DeleteForward())
-  | CaretLeft -> model |> withEditor (fun editor -> editor.MoveLeft())
-  | CaretRight -> model |> withEditor (fun editor -> editor.MoveRight())
-  | CaretHome -> model |> withEditor (fun editor -> editor.MoveHome())
-  | CaretEnd -> model |> withEditor (fun editor -> editor.MoveEnd())
+  | Edit action ->
+    match model.InputMode with
+    | AddingItem editor ->
+      TextEditing.apply action editor
+      model, []
+    | Normal -> model, []
   | ConfirmAdd ->
     match model.InputMode with
     | AddingItem editor ->
