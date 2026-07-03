@@ -21,6 +21,10 @@ type Model = {
   Lock: Locking.Lock option
   User: string
   Persistence: Firebase.Persistence
+  // Live editor, present only while in Insert mode. It owns the caret and does
+  // all at-cursor editing; FreetextContent is kept in sync from it on each edit
+  // and remains the source of truth for persistence and Normal-mode rendering.
+  Editor: TextBoxWidget option
 }
 
 type Msg =
@@ -28,7 +32,14 @@ type Msg =
   | ExitInsert
   | TypeChar of char
   | TypeBackspace
+  | TypeDelete
   | TypeNewLine
+  | CaretLeft
+  | CaretRight
+  | CaretUp
+  | CaretDown
+  | CaretHome
+  | CaretEnd
   | MaybeSaveFreetext of int
   | MaybeAutoExitInsert of int
   | RemoteStateLoaded of Session.NotesState option
@@ -73,9 +84,19 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
   | Insert ->
     match key.Key with
     | ConsoleKey.Escape -> Some ExitInsert
+    | ConsoleKey.LeftArrow -> Some CaretLeft
+    | ConsoleKey.RightArrow -> Some CaretRight
+    | ConsoleKey.UpArrow -> Some CaretUp
+    | ConsoleKey.DownArrow -> Some CaretDown
+    | ConsoleKey.Home -> Some CaretHome
+    | ConsoleKey.End -> Some CaretEnd
     | ConsoleKey.Backspace -> Some TypeBackspace
+    | ConsoleKey.Delete -> Some TypeDelete
     | ConsoleKey.Enter -> Some TypeNewLine
-    | _ when key.KeyChar <> '\000' -> Some(TypeChar key.KeyChar)
+    // Only insert genuinely printable characters. This drops control keys such
+    // as Tab ('\t'), whose literal insertion garbled the editor, along with the
+    // null char produced by unhandled navigation keys.
+    | _ when not (Char.IsControl key.KeyChar) -> Some(TypeChar key.KeyChar)
     | _ -> None
   | Normal ->
     match key.KeyChar with
@@ -106,6 +127,7 @@ let init (client: FirebaseClient) (sessionId: string) (user: string) = {
     Client = client
     SessionId = sessionId
   }
+  Editor = None
 }
 
 let private saveFreetextCmd (model: Model) : Cmd<Msg> =
@@ -142,6 +164,35 @@ let private releaseLockCmd (model: Model) : Cmd<Msg> =
     ()
     (fun () -> StateSaved)
 
+// Apply an at-caret edit to the live editor, sync the content back for
+// persistence, and schedule the debounced save plus the idle auto-exit.
+let private editWith (mutate: TextBoxWidget -> unit) (model: Model) : Model * Cmd<Msg> =
+  match model.Editor with
+  | None -> model, []
+  | Some editor ->
+    mutate editor
+    let bumped = model.FreetextSaveToken + 1
+    let activityToken = model.InsertActivityToken + 1
+
+    let updated = {
+      model with
+          FreetextContent = editor.Text
+          FreetextSaveToken = bumped
+          InsertActivityToken = activityToken
+    }
+
+    updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
+
+// Move the caret. Content is unchanged (no save), but it counts as activity so
+// the idle auto-exit timer is refreshed.
+let private moveCaret (mutate: TextBoxWidget -> unit) (model: Model) : Model * Cmd<Msg> =
+  match model.Editor with
+  | None -> model, []
+  | Some editor ->
+    mutate editor
+    let activityToken = model.InsertActivityToken + 1
+    { model with InsertActivityToken = activityToken }, scheduleAutoExit activityToken
+
 let update msg model =
   match msg with
   | EnterInsert ->
@@ -155,11 +206,21 @@ let update msg model =
         LockedAt = Clock.nowMs ()
       }
 
+      // Build the live editor from the current content and place the caret at
+      // the end (matching the previous behaviour). It owns the caret from here.
+      let editor =
+        textBox model.FreetextContent
+        |> withMode TextBoxMode.MultiLine
+        |> focused
+
+      editor.MoveToEnd()
+
       let updated = {
         model with
             InputMode = Insert
             InsertActivityToken = activityToken
             Lock = Some lock
+            Editor = Some editor
       }
 
       updated, Cmd.batch [ saveLockCmd updated; scheduleAutoExit activityToken ]
@@ -173,10 +234,19 @@ let update msg model =
       | Insert -> true
       | Normal -> false
 
+    // Final sync from the editor (content is already synced on each edit) and
+    // tear it down so Normal mode renders the wrapping paragraph instead.
+    let syncedContent =
+      match model.Editor with
+      | Some editor -> editor.Text
+      | None -> model.FreetextContent
+
     let updated = {
       model with
           InputMode = Normal
+          FreetextContent = syncedContent
           FreetextSaveToken = bumped
+          Editor = None
           Lock =
             match wasInsert with
             | true -> None
@@ -189,42 +259,16 @@ let update msg model =
       | false -> []
 
     updated, Cmd.batch cmds
-  | TypeChar c ->
-    let bumped = model.FreetextSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
-
-    let updated = {
-      model with
-          FreetextContent = model.FreetextContent + string c
-          FreetextSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
-
-    updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
-  | TypeBackspace ->
-    let bumped = model.FreetextSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
-
-    let updated = {
-      model with
-          FreetextContent = Str.dropLast model.FreetextContent
-          FreetextSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
-
-    updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
-  | TypeNewLine ->
-    let bumped = model.FreetextSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
-
-    let updated = {
-      model with
-          FreetextContent = model.FreetextContent + "\n"
-          FreetextSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
-
-    updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
+  | TypeChar c -> model |> editWith (fun editor -> editor.Insert(string c))
+  | TypeBackspace -> model |> editWith (fun editor -> editor.DeleteBackward())
+  | TypeDelete -> model |> editWith (fun editor -> editor.DeleteForward())
+  | TypeNewLine -> model |> editWith (fun editor -> editor.InsertNewLine())
+  | CaretLeft -> model |> moveCaret (fun editor -> editor.MoveLeft())
+  | CaretRight -> model |> moveCaret (fun editor -> editor.MoveRight())
+  | CaretUp -> model |> moveCaret (fun editor -> editor.MoveUp())
+  | CaretDown -> model |> moveCaret (fun editor -> editor.MoveDown())
+  | CaretHome -> model |> moveCaret (fun editor -> editor.MoveHome())
+  | CaretEnd -> model |> moveCaret (fun editor -> editor.MoveEnd())
   | RemoteStateLoaded(Some state) ->
     // While the user is actively typing, ignore the freetext echo from the
     // remote — applying it would clobber characters typed since the in-flight
@@ -278,10 +322,14 @@ let subscriptions (model: Model) =
 let widget (model: Model) (isFocused: bool) : IWidget =
   match model.InputMode with
   | Insert ->
-    textBox model.FreetextContent
-    |> withMode TextBoxMode.MultiLine
-    |> (focused >> withCursorAtEnd)
-    :> IWidget
+    match model.Editor with
+    | Some editor -> editor :> IWidget
+    | None ->
+      // Defensive fallback; Insert mode always carries an editor.
+      textBox model.FreetextContent
+      |> withMode TextBoxMode.MultiLine
+      |> (focused >> withCursorAtEnd)
+      :> IWidget
   | Normal ->
     ofString model.FreetextContent
     |> withOverflow Overflow.Fold
