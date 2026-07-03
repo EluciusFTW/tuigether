@@ -276,9 +276,13 @@ let subscriptions (model: Model) =
   Firebase.Notes.subscription model.Persistence.Client model.Persistence.SessionId RemoteStateLoaded
 
 let widget (model: Model) (isFocused: bool) : IWidget =
-  textBox model.FreetextContent
-  |> withMode TextBoxMode.MultiLine
-  |> (match model.InputMode with
-      | Insert -> focused >> withCursorAtEnd
-      | Normal -> unfocused)
-  :> IWidget
+  match model.InputMode with
+  | Insert ->
+    textBox model.FreetextContent
+    |> withMode TextBoxMode.MultiLine
+    |> (focused >> withCursorAtEnd)
+    :> IWidget
+  | Normal ->
+    ofString model.FreetextContent
+    |> withOverflow Overflow.Fold
+    :> IWidget
