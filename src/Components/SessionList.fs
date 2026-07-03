@@ -12,7 +12,9 @@ open SpectreTuff.Widgets
 
 type InputMode =
   | Browsing
-  | Naming of text: string * error: string option
+  // Carries the live editor while naming, so it owns the caret and does all
+  // at-cursor editing; the title is read back from it on confirm.
+  | Naming of editor: TextBoxWidget * error: string option
 
 type Model = {
   Sessions: (string * Session.Data) list
@@ -31,6 +33,11 @@ type Msg =
   | BeginNaming
   | TypeChar of char
   | TypeBackspace
+  | TypeDelete
+  | CaretLeft
+  | CaretRight
+  | CaretHome
+  | CaretEnd
   | ConfirmName
   | CancelNaming
   | DeleteSelected
@@ -77,6 +84,16 @@ let private isDuplicateTitle (model: Model) (title: string) =
       not (isNull data.Title)
       && String.Equals(data.Title.Trim(), title, StringComparison.OrdinalIgnoreCase))
 
+// Apply an at-caret action to the live naming editor and clear any stale
+// validation error. The title is read back from the editor only on confirm;
+// Elmish re-renders after every message, so the mutated editor shows at once.
+let private withEditor (action: TextBoxWidget -> unit) (model: Model) : Model * Cmd<Msg> * OutMsg option =
+  match model.InputMode with
+  | Naming(editor, _) ->
+    action editor
+    { model with InputMode = Naming(editor, None) }, [], None
+  | Browsing -> model, [], None
+
 let update msg model : Model * Cmd<Msg> * OutMsg option =
   match msg with
   | Up ->
@@ -100,49 +117,42 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
       let sessionId, sessionData = model.Sessions.[model.SelectedIndex]
       model, [], Some(OpenSession(sessionId, sessionData))
   | BeginNaming ->
+    let editor =
+      textBox ""
+      |> withMode TextBoxMode.SingleLine
+      |> withPlaceholder "Session title…"
+      |> focused
+
     {
       model with
-          InputMode = Naming("", None)
+          InputMode = Naming(editor, None)
     },
     [],
     None
-  | TypeChar c ->
-    match model.InputMode with
-    | Naming(text, _) ->
-      {
-        model with
-            InputMode = Naming(text + string c, None)
-      },
-      [],
-      None
-    | Browsing -> model, [], None
-  | TypeBackspace ->
-    match model.InputMode with
-    | Naming(text, _) ->
-      {
-        model with
-            InputMode = Naming(Str.dropLast text, None)
-      },
-      [],
-      None
-    | Browsing -> model, [], None
+  | TypeChar c -> model |> withEditor (fun editor -> editor.Insert(string c))
+  | TypeBackspace -> model |> withEditor (fun editor -> editor.DeleteBackward())
+  | TypeDelete -> model |> withEditor (fun editor -> editor.DeleteForward())
+  | CaretLeft -> model |> withEditor (fun editor -> editor.MoveLeft())
+  | CaretRight -> model |> withEditor (fun editor -> editor.MoveRight())
+  | CaretHome -> model |> withEditor (fun editor -> editor.MoveHome())
+  | CaretEnd -> model |> withEditor (fun editor -> editor.MoveEnd())
   | ConfirmName ->
     match model.InputMode with
-    | Naming(text, _) ->
-      let trimmed = text.Trim()
+    | Naming(editor, _) ->
+      let trimmed = editor.Text.Trim()
 
       match trimmed with
       | "" ->
         {
           model with
-              InputMode = Naming(text, Some "Title required")
+              InputMode = Naming(editor, Some "Title required")
         },
         [],
         None
       | _ when isDuplicateTitle model trimmed ->
         {
           model with
-              InputMode = Naming(text, Some "Title already used")
+              InputMode = Naming(editor, Some "Title already used")
         },
         [],
         None
@@ -270,8 +280,13 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     match key.Key with
     | ConsoleKey.Escape -> Some CancelNaming
     | ConsoleKey.Enter -> Some ConfirmName
+    | ConsoleKey.LeftArrow -> Some CaretLeft
+    | ConsoleKey.RightArrow -> Some CaretRight
+    | ConsoleKey.Home -> Some CaretHome
+    | ConsoleKey.End -> Some CaretEnd
     | ConsoleKey.Backspace -> Some TypeBackspace
-    | _ when key.KeyChar <> '\000' -> Some(TypeChar key.KeyChar)
+    | ConsoleKey.Delete -> Some TypeDelete
+    | _ when not (Char.IsControl key.KeyChar) -> Some(TypeChar key.KeyChar)
     | _ -> None
   | Browsing -> KeyBinding.handleKey browsingBindings key model
 
@@ -352,18 +367,12 @@ let widget (model: Model) : IWidget =
 
   match model.InputMode with
   | Browsing -> listWidget
-  | Naming(text, error) ->
+  | Naming(editor, error) ->
     { new IWidget with
         member _.Render(ctx) =
           ctx.Render(listWidget)
 
-          let inputWidget =
-            textBox text
-            |> withMode TextBoxMode.SingleLine
-            |> withPlaceholder "Session title…"
-            |> focused
-            |> withCursorAtEnd
-            :> IWidget
+          let inputWidget = editor :> IWidget
 
           let popupContent =
             { new IWidget with
