@@ -11,7 +11,9 @@ open SpectreTuff.Widgets
 
 type InputMode =
   | Normal
-  | AddingItem of string
+  // Carries the live editor while adding, so it owns the caret and does all
+  // at-cursor editing; the item text is read back from it on confirm.
+  | AddingItem of TextBoxWidget
 
 // Items carry their Firebase push-ID so toggles and deletes target a stable key
 // and concurrent multi-user edits do not collide.
@@ -34,6 +36,11 @@ type Msg =
   | StartAdd
   | TypeChar of char
   | TypeBackspace
+  | TypeDelete
+  | CaretLeft
+  | CaretRight
+  | CaretHome
+  | CaretEnd
   | ConfirmAdd
   | CancelAdd
   | Toggle
@@ -63,9 +70,14 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
   | AddingItem _ ->
     match key.Key with
     | ConsoleKey.Escape -> Some CancelAdd
-    | ConsoleKey.Backspace -> Some TypeBackspace
     | ConsoleKey.Enter -> Some ConfirmAdd
-    | _ when key.KeyChar <> '\000' -> Some(TypeChar key.KeyChar)
+    | ConsoleKey.LeftArrow -> Some CaretLeft
+    | ConsoleKey.RightArrow -> Some CaretRight
+    | ConsoleKey.Home -> Some CaretHome
+    | ConsoleKey.End -> Some CaretEnd
+    | ConsoleKey.Backspace -> Some TypeBackspace
+    | ConsoleKey.Delete -> Some TypeDelete
+    | _ when not (Char.IsControl key.KeyChar) -> Some(TypeChar key.KeyChar)
     | _ -> None
   | Normal ->
     match key.Key with
@@ -159,6 +171,16 @@ let private swapAdjacent (model: Model) (topIndex: int) =
 
   newItems, newTop, newBottom
 
+// Apply an at-caret action to the live add-item editor. Content is read back
+// from the editor only on confirm, so nothing else changes here; Elmish
+// re-renders after every message, so the mutated editor is shown immediately.
+let private withEditor (action: TextBoxWidget -> unit) (model: Model) : Model * Cmd<Msg> =
+  match model.InputMode with
+  | AddingItem editor ->
+    action editor
+    model, []
+  | Normal -> model, []
+
 let update msg model =
   match msg with
   | Up ->
@@ -183,30 +205,26 @@ let update msg model =
             SelectedIndex = (model.SelectedIndex + 1) % count
       },
       []
-  | StartAdd -> { model with InputMode = AddingItem "" }, []
-  | TypeChar c ->
-    match model.InputMode with
-    | AddingItem text ->
-      {
-        model with
-            InputMode = AddingItem(text + string c)
-      },
-      []
-    | Normal -> model, []
-  | TypeBackspace ->
-    match model.InputMode with
-    | AddingItem text ->
-      {
-        model with
-            InputMode = AddingItem(Str.dropLast text)
-      },
-      []
-    | Normal -> model, []
+  | StartAdd ->
+    let editor =
+      textBox ""
+      |> withMode TextBoxMode.SingleLine
+      |> withPlaceholder "Enter item text…"
+      |> focused
+
+    { model with InputMode = AddingItem editor }, []
+  | TypeChar c -> model |> withEditor (fun editor -> editor.Insert(string c))
+  | TypeBackspace -> model |> withEditor (fun editor -> editor.DeleteBackward())
+  | TypeDelete -> model |> withEditor (fun editor -> editor.DeleteForward())
+  | CaretLeft -> model |> withEditor (fun editor -> editor.MoveLeft())
+  | CaretRight -> model |> withEditor (fun editor -> editor.MoveRight())
+  | CaretHome -> model |> withEditor (fun editor -> editor.MoveHome())
+  | CaretEnd -> model |> withEditor (fun editor -> editor.MoveEnd())
   | ConfirmAdd ->
     match model.InputMode with
-    | AddingItem text ->
+    | AddingItem editor ->
       let newText =
-        match text.Trim() with
+        match editor.Text.Trim() with
         | "" -> "New todo"
         | s -> s
 
@@ -366,23 +384,15 @@ let widget (model: Model) (isFocused: bool) : IWidget =
     :> IWidget
 
   match model.InputMode with
-  | AddingItem text ->
+  | AddingItem editor ->
     { new IWidget with
         member _.Render(ctx) =
           ctx.Render(listWidget)
 
-          let inputWidget =
-            textBox text
-            |> withMode TextBoxMode.SingleLine
-            |> withPlaceholder "Enter item text…"
-            |> focused
-            |> withCursorAtEnd
-            :> IWidget
-
           let boxedInput =
             box (Look.fromColor Color.Green)
             |> withTitle "New item"
-            |> withInnerWidget inputWidget
+            |> withInnerWidget (editor :> IWidget)
             :> IWidget
 
           ctx.Render(popup 44 3 |> withPopupContent boxedInput :> IWidget)
