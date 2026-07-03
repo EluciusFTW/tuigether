@@ -21,14 +21,16 @@ type Model = {
   Lock: Locking.Lock option
   User: string
   Persistence: Firebase.Persistence
+  // Live editor, present only while in Insert mode. It owns the caret and does
+  // all at-cursor editing; FreetextContent is kept in sync from it on each edit
+  // and remains the source of truth for persistence and Normal-mode rendering.
+  Editor: TextBoxWidget option
 }
 
 type Msg =
   | EnterInsert
   | ExitInsert
-  | TypeChar of char
-  | TypeBackspace
-  | TypeNewLine
+  | Edit of TextEditing.EditAction
   | MaybeSaveFreetext of int
   | MaybeAutoExitInsert of int
   | RemoteStateLoaded of Session.NotesState option
@@ -71,12 +73,11 @@ let private normalBindings: KeyBinding<Model, Msg> list = [
 let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
   match model.InputMode with
   | Insert ->
+    // keyToAction drops control keys such as Tab (whose literal insertion garbled
+    // the editor); Escape stays here so it can exit insert mode.
     match key.Key with
     | ConsoleKey.Escape -> Some ExitInsert
-    | ConsoleKey.Backspace -> Some TypeBackspace
-    | ConsoleKey.Enter -> Some TypeNewLine
-    | _ when key.KeyChar <> '\000' -> Some(TypeChar key.KeyChar)
-    | _ -> None
+    | _ -> TextEditing.keyToAction true key |> Option.map Edit
   | Normal ->
     match key.KeyChar with
     | 'i' -> Some EnterInsert
@@ -106,6 +107,7 @@ let init (client: FirebaseClient) (sessionId: string) (user: string) = {
     Client = client
     SessionId = sessionId
   }
+  Editor = None
 }
 
 let private saveFreetextCmd (model: Model) : Cmd<Msg> =
@@ -155,11 +157,21 @@ let update msg model =
         LockedAt = Clock.nowMs ()
       }
 
+      // Build the live editor from the current content and place the caret at
+      // the end (matching the previous behaviour). It owns the caret from here.
+      let editor =
+        textBox model.FreetextContent
+        |> withMode TextBoxMode.MultiLine
+        |> focused
+
+      editor.MoveToEnd()
+
       let updated = {
         model with
             InputMode = Insert
             InsertActivityToken = activityToken
             Lock = Some lock
+            Editor = Some editor
       }
 
       updated, Cmd.batch [ saveLockCmd updated; scheduleAutoExit activityToken ]
@@ -173,10 +185,19 @@ let update msg model =
       | Insert -> true
       | Normal -> false
 
+    // Final sync from the editor (content is already synced on each edit) and
+    // tear it down so Normal mode renders the wrapping paragraph instead.
+    let syncedContent =
+      match model.Editor with
+      | Some editor -> editor.Text
+      | None -> model.FreetextContent
+
     let updated = {
       model with
           InputMode = Normal
+          FreetextContent = syncedContent
           FreetextSaveToken = bumped
+          Editor = None
           Lock =
             match wasInsert with
             | true -> None
@@ -189,42 +210,28 @@ let update msg model =
       | false -> []
 
     updated, Cmd.batch cmds
-  | TypeChar c ->
-    let bumped = model.FreetextSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
+  | Edit action ->
+    match model.Editor with
+    | None -> model, []
+    | Some editor ->
+      TextEditing.apply action editor
+      let activityToken = model.InsertActivityToken + 1
 
-    let updated = {
-      model with
-          FreetextContent = model.FreetextContent + string c
-          FreetextSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
+      // Text edits sync back for persistence and schedule a debounced save; pure
+      // caret moves only refresh the idle auto-exit timer.
+      match TextEditing.isMutation action with
+      | true ->
+        let bumped = model.FreetextSaveToken + 1
 
-    updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
-  | TypeBackspace ->
-    let bumped = model.FreetextSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
+        let updated = {
+          model with
+              FreetextContent = editor.Text
+              FreetextSaveToken = bumped
+              InsertActivityToken = activityToken
+        }
 
-    let updated = {
-      model with
-          FreetextContent = Str.dropLast model.FreetextContent
-          FreetextSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
-
-    updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
-  | TypeNewLine ->
-    let bumped = model.FreetextSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
-
-    let updated = {
-      model with
-          FreetextContent = model.FreetextContent + "\n"
-          FreetextSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
-
-    updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
+        updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
+      | false -> { model with InsertActivityToken = activityToken }, scheduleAutoExit activityToken
   | RemoteStateLoaded(Some state) ->
     // While the user is actively typing, ignore the freetext echo from the
     // remote — applying it would clobber characters typed since the in-flight
@@ -278,10 +285,14 @@ let subscriptions (model: Model) =
 let widget (model: Model) (isFocused: bool) : IWidget =
   match model.InputMode with
   | Insert ->
-    textBox model.FreetextContent
-    |> withMode TextBoxMode.MultiLine
-    |> (focused >> withCursorAtEnd)
-    :> IWidget
+    match model.Editor with
+    | Some editor -> editor :> IWidget
+    | None ->
+      // Defensive fallback; Insert mode always carries an editor.
+      textBox model.FreetextContent
+      |> withMode TextBoxMode.MultiLine
+      |> (focused >> withCursorAtEnd)
+      :> IWidget
   | Normal ->
     ofString model.FreetextContent
     |> withOverflow Overflow.Fold

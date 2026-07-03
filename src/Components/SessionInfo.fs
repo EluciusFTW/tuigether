@@ -43,6 +43,10 @@ type Model = {
   GoalSaveToken: int
   InsertActivityToken: int
   InputMode: InputMode
+  // Live goal editor, present only while editing (Insert or GoalPopup). It owns
+  // the caret; GoalContent is synced from it on each edit and stays the source
+  // of truth for persistence and non-editing display.
+  Editor: TextBoxWidget option
   Lock: Locking.Lock option
   GitBranch: string
   LocalGitBranch: string
@@ -55,9 +59,7 @@ type Model = {
 type Msg =
   | EnterInsert
   | ExitInsert
-  | TypeChar of char
-  | TypeBackspace
-  | TypeNewLine
+  | Edit of TextEditing.EditAction
   | MaybeSaveGoal of int
   | MaybeAutoExitInsert of int
   | SessionDataUpdated of Session.Data
@@ -130,6 +132,7 @@ let init (client: FirebaseClient) (sessionId: string) (user: string) (sessionDat
   GoalSaveToken = 0
   InsertActivityToken = 0
   InputMode = Normal
+  Editor = None
   Lock = lockFromData sessionData
   GitBranch = branchFromData sessionData
   LocalGitBranch = Git.readCurrentBranch ()
@@ -234,10 +237,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
   | Insert ->
     match key.Key with
     | ConsoleKey.Escape -> Some ExitInsert
-    | ConsoleKey.Backspace -> Some TypeBackspace
-    | ConsoleKey.Enter -> Some TypeNewLine
-    | _ when key.KeyChar <> '\000' -> Some(TypeChar key.KeyChar)
-    | _ -> None
+    | _ -> TextEditing.keyToAction true key |> Option.map Edit
   | Normal ->
     match key.KeyChar with
     | 'i' -> Some EnterInsert
@@ -246,12 +246,11 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | 'w' when isRepoOK model && model.LocalGitBranch = model.GitBranch -> Some BeginWipSync
     | _ -> None
   | GoalPopup ->
+    // Single-line: Enter and Escape both close.
     match key.Key with
     | ConsoleKey.Escape -> Some CloseGoalPopup
     | ConsoleKey.Enter -> Some CloseGoalPopup
-    | ConsoleKey.Backspace -> Some TypeBackspace
-    | _ when key.KeyChar <> '\000' -> Some(TypeChar key.KeyChar)
-    | _ -> None
+    | _ -> TextEditing.keyToAction false key |> Option.map Edit
   | BranchPopup { Stage = EditingName _ } ->
     match key.Key with
     | ConsoleKey.Escape -> Some DismissBranchPopup
@@ -361,6 +360,8 @@ let private saveGitBranchCmd (model: Model) (branch: string) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> Firebase.Sessions.saveGitBranch model.Client model.SessionId branch) () (fun () ->
     StateSaved)
 
+let private goalLook = Look.fromColor Color.Yellow |> Look.withDecorations [ Decoration.Italic ]
+
 let update msg model =
   match msg with
   | EnterInsert ->
@@ -374,11 +375,21 @@ let update msg model =
         LockedAt = nowMs ()
       }
 
+      // Build the multi-line editor from the current goal, caret at the end.
+      let editor =
+        textBox model.GoalContent
+        |> withMode TextBoxMode.MultiLine
+        |> TextBoxes.withLook goalLook
+        |> focused
+
+      editor.MoveToEnd()
+
       let updated = {
         model with
             InputMode = Insert
             InsertActivityToken = activityToken
             Lock = Some lock
+            Editor = Some editor
       }
 
       updated, Cmd.batch [ saveGoalLockCmd updated; scheduleAutoExit activityToken ]
@@ -389,52 +400,44 @@ let update msg model =
       // the current content immediately so other users see the final edit.
       let bumped = model.GoalSaveToken + 1
 
+      let syncedContent =
+        match model.Editor with
+        | Some editor -> editor.Text
+        | None -> model.GoalContent
+
       let updated = {
         model with
             InputMode = Normal
+            GoalContent = syncedContent
             GoalSaveToken = bumped
+            Editor = None
             Lock = None
       }
 
       updated, Cmd.batch [ saveGoalCmd updated; releaseGoalLockCmd updated ]
     | _ -> model, []
-  | TypeChar c ->
-    let bumped = model.GoalSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
+  | Edit action ->
+    match model.Editor with
+    | None -> model, []
+    | Some editor ->
+      TextEditing.apply action editor
+      let activityToken = model.InsertActivityToken + 1
 
-    let updated = {
-      model with
-          GoalContent = model.GoalContent + string c
-          GoalSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
+      // Text edits sync back for persistence and schedule a debounced save; pure
+      // caret moves only refresh the idle auto-exit timer.
+      match TextEditing.isMutation action with
+      | true ->
+        let bumped = model.GoalSaveToken + 1
 
-    updated, Cmd.batch [ scheduleGoalSave bumped; scheduleAutoExit activityToken ]
-  | TypeBackspace ->
-    let text = model.GoalContent
-    let bumped = model.GoalSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
+        let updated = {
+          model with
+              GoalContent = editor.Text
+              GoalSaveToken = bumped
+              InsertActivityToken = activityToken
+        }
 
-    let updated = {
-      model with
-          GoalContent = Str.dropLast text
-          GoalSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
-
-    updated, Cmd.batch [ scheduleGoalSave bumped; scheduleAutoExit activityToken ]
-  | TypeNewLine ->
-    let bumped = model.GoalSaveToken + 1
-    let activityToken = model.InsertActivityToken + 1
-
-    let updated = {
-      model with
-          GoalContent = model.GoalContent + "\n"
-          GoalSaveToken = bumped
-          InsertActivityToken = activityToken
-    }
-
-    updated, Cmd.batch [ scheduleGoalSave bumped; scheduleAutoExit activityToken ]
+        updated, Cmd.batch [ scheduleGoalSave bumped; scheduleAutoExit activityToken ]
+      | false -> { model with InsertActivityToken = activityToken }, scheduleAutoExit activityToken
   | MaybeSaveGoal token ->
     match token = model.GoalSaveToken with
     | true ->
@@ -690,10 +693,20 @@ let update msg model =
         LockedAt = nowMs ()
       }
 
+      // Single-line editor for the popup (goal is empty when this opens).
+      let editor =
+        textBox model.GoalContent
+        |> withMode TextBoxMode.SingleLine
+        |> withPlaceholder "what are you working on?"
+        |> focused
+
+      editor.MoveToEnd()
+
       let updated = {
         model with
             InputMode = GoalPopup
             Lock = Some lock
+            Editor = Some editor
       }
 
       updated, saveGoalLockCmd updated
@@ -703,10 +716,17 @@ let update msg model =
     | GoalPopup ->
       let bumped = model.GoalSaveToken + 1
 
+      let syncedContent =
+        match model.Editor with
+        | Some editor -> editor.Text
+        | None -> model.GoalContent
+
       let updated = {
         model with
             InputMode = Normal
+            GoalContent = syncedContent
             GoalSaveToken = bumped
+            Editor = None
             Lock = None
       }
 
@@ -714,8 +734,6 @@ let update msg model =
     | _ -> model, []
 
 let subscriptions (_model: Model) = []
-
-let private goalLook = Look.fromColor Color.Yellow |> Look.withDecorations [ Decoration.Italic ]
 
 let private infoLayout =
   layout "session-info"
@@ -763,15 +781,7 @@ let private renderBranchPopup (popup: BranchPopup) : IWidget =
   |> withInnerWidget inner
   :> IWidget
 
-let private renderGoalPopup (goalContent: string) : IWidget =
-  let inputWidget: IWidget =
-    textBox goalContent
-    |> withMode TextBoxMode.SingleLine
-    |> withPlaceholder "what are you working on?"
-    |> focused
-    |> withCursorAtEnd
-    :> IWidget
-
+let private renderGoalPopup (inputWidget: IWidget) : IWidget =
   let inner =
     { new IWidget with
         member _.Render(innerCtx) =
@@ -812,13 +822,14 @@ let widget (model: Model) : IWidget =
         let port = getPort ctx.Viewport infoLayout
 
         let goalWidget =
-          textBox model.GoalContent
-          |> withMode TextBoxMode.MultiLine
-          |> TextBoxes.withLook goalLook
-          |> (match model.InputMode with
-              | Insert -> focused >> withCursorAtEnd
-              | _ -> unfocused)
-          :> IWidget
+          match model.InputMode, model.Editor with
+          | Insert, Some editor -> editor :> IWidget
+          | _ ->
+            textBox model.GoalContent
+            |> withMode TextBoxMode.MultiLine
+            |> TextBoxes.withLook goalLook
+            |> unfocused
+            :> IWidget
 
         ctx.Render(goalWidget, View.padWith (View.padding 1 0 0 0) (port "goal"))
 
@@ -854,7 +865,19 @@ let widget (model: Model) : IWidget =
           ctx.Render(popup 60 6 |> withPopupContent (renderBranchPopup branchState) :> IWidget)
         | SyncPopup stage ->
           ctx.Render(popup 60 5 |> withPopupContent (renderSyncPopup stage model.GitBranch) :> IWidget)
-        | GoalPopup -> ctx.Render(popup 60 5 |> withPopupContent (renderGoalPopup model.GoalContent) :> IWidget)
+        | GoalPopup ->
+          let input =
+            match model.Editor with
+            | Some editor -> editor :> IWidget
+            | None ->
+              textBox model.GoalContent
+              |> withMode TextBoxMode.SingleLine
+              |> withPlaceholder "what are you working on?"
+              |> focused
+              |> withCursorAtEnd
+              :> IWidget
+
+          ctx.Render(popup 60 5 |> withPopupContent (renderGoalPopup input) :> IWidget)
         | Normal
         | Insert -> ()
   }
