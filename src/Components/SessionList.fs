@@ -238,7 +238,7 @@ let private browsingBindings: KeyBinding<Model, Msg> list = [
   KeyBinding.createSpecial ConsoleKey.DownArrow "down" Down
   KeyBinding.createSpecial ConsoleKey.Enter "open" OpenSelected
   KeyBinding.create 'n' "new session" BeginNaming
-  KeyBinding.dynamic (SpecialKey ConsoleKey.Delete) (fun model ->
+  KeyBinding.dynamic (CharKey 'x') (fun model ->
     let canDelete =
       not model.Sessions.IsEmpty
       && model.SelectedIndex >= 0
