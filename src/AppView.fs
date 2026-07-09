@@ -15,12 +15,12 @@ type AppView(model: Model) =
         let composedWidget =
           { new IWidget with
               member _.Render(ctx) =
-                match panel.Boxed with
-                | true ->
+                match panel.Boxed, KeymapModal.mode with
+                | true, KeymapModal.Inline ->
                   let port = AppLayout.portFor ctx.Viewport AppLayout.panelInnerLayout
                   ctx.Render(panel.Widget, port AppLayout.Content)
                   ctx.Render(help [ panel.KeyMap ] |> leftAligned, port AppLayout.Keys)
-                | false -> ctx.Render(panel.Widget, ctx.Viewport)
+                | _ -> ctx.Render(panel.Widget, ctx.Viewport)
           }
 
         let renderedPanel: IWidget =
@@ -41,15 +41,23 @@ type AppView(model: Model) =
       | true -> Log.view model.LogModel ctx (slotPort AppLayout.Log)
       | false -> ()
 
-      let helpMaps =
-        match model.Page with
-        | SessionViewPage viewModel ->
-          [ SessionView.keyMap viewModel ]
-          @ SessionView.helpKeyMaps viewModel
-          @ [ globalKeyMap ]
-        | _ -> [ globalKeyMap ]
+      match KeymapModal.mode with
+      | KeymapModal.Inline ->
+        let helpMaps =
+          match model.Page with
+          | SessionViewPage viewModel ->
+            [ SessionView.keyMap viewModel ]
+            @ SessionView.helpKeyMaps viewModel
+            @ [ globalKeyMap ]
+          | _ -> [ globalKeyMap ]
 
-      ctx.Render(help helpMaps |> leftAligned, slotPort AppLayout.Help)
+        ctx.Render(help helpMaps |> leftAligned, slotPort AppLayout.Help)
+      | KeymapModal.Modal ->
+        ctx.Render(help [ keymapHintMap ] |> leftAligned, slotPort AppLayout.Help)
+
+        match model.ShowKeymap with
+        | true -> ctx.Render(KeymapModal.widget (keymapSections model))
+        | false -> ()
 
 // Spectre.Tui's AnsiTerminal keeps mutable buffer/state shared across writes
 // and is not thread-safe. Subscription callbacks (Firebase observables, async

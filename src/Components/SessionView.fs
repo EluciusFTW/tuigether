@@ -288,6 +288,21 @@ let helpKeyMaps (model: Model) : IKeyMap list = [
   GlobalKeys.keyMap (stageHelp model) (canFastForward model) (pauseHelp model)
 ]
 
+let keymapSections (model: Model) : (string * IKeyMap) list =
+  let localSection =
+    match model.Focus with
+    | 1 -> [ "Info", SessionInfo.keyMap model.SessionInfo ]
+    | 2 -> [ "Notes", Notes.keyMap model.Notes ]
+    | 3 -> [ "Todo", TodoList.keyMap model.TodoList ]
+    | 4 -> [ "List", NoteList.keyMap model.NoteList ]
+    | _ -> []
+
+  localSection
+  @ [ "Session", keyMap model ]
+  @ [
+    "Drive", GlobalKeys.keyMap (stageHelp model) (canFastForward model) (pauseHelp model)
+  ]
+
 let private emptyKeyMap: IKeyMap =
   { new IKeyMap with
       member _.Help() =
@@ -299,15 +314,18 @@ let private panelInnerLayout =
   |> splitHorizontally [| layout "content"; layout "keys" |> withFixedSize (Some 1) |]
 
 let private withPanelKeys (panelWidget: IWidget) (panelKeyMap: IKeyMap) (focused: bool) : IWidget =
-  { new IWidget with
-      member _.Render(ctx) =
-        let port = getPort ctx.Viewport panelInnerLayout
-        ctx.Render(panelWidget, port "content")
+  match KeymapModal.mode with
+  | KeymapModal.Modal -> panelWidget
+  | KeymapModal.Inline ->
+    { new IWidget with
+        member _.Render(ctx) =
+          let port = getPort ctx.Viewport panelInnerLayout
+          ctx.Render(panelWidget, port "content")
 
-        match focused with
-        | true -> ctx.Render(help [ panelKeyMap ] |> leftAligned, port "keys")
-        | false -> ()
-  }
+          match focused with
+          | true -> ctx.Render(help [ panelKeyMap ] |> leftAligned, port "keys")
+          | false -> ()
+    }
 
 let private middleLayout =
   layout "middle-area"

@@ -21,6 +21,7 @@ type Model = {
   Focus: int
   LogVisible: bool
   LogModel: Log.Model
+  ShowKeymap: bool
   Exiting: bool
 }
 
@@ -30,6 +31,7 @@ type Msg =
   | SessionViewMsg of SessionView.Msg
   | LeaveFinalized
   | ToggleLog
+  | ToggleKeymap
   | Tick
   | Exit
 
@@ -52,6 +54,13 @@ let exitEvent = new Threading.ManualResetEventSlim false
 let private globalBindings: Keymap.KeyBinding<unit, Msg> list = [
   Keymap.KeyBinding.create 'q' "quit" Exit
   Keymap.KeyBinding.create 'l' "toggle log" ToggleLog
+  Keymap.KeyBinding.dynamic (Keymap.CharKey '?') (fun _ -> {
+    Description = "keymaps"
+    Message =
+      match KeymapModal.mode with
+      | KeymapModal.Modal -> Some ToggleKeymap
+      | KeymapModal.Inline -> None
+  })
 ]
 
 let private handleGlobalKey (key: ConsoleKeyInfo) : Msg option =
@@ -59,6 +68,16 @@ let private handleGlobalKey (key: ConsoleKeyInfo) : Msg option =
 
 // Not private: consumed by the AppView rendering module (help bar) and below.
 let globalKeyMap: IKeyMap = Keymap.KeyBinding.toKeyMap globalBindings ()
+
+let keymapHintMap: IKeyMap = Keymap.KeyBinding.toKeyMap [ Keymap.KeyBinding.create '?' "keymaps" ToggleKeymap ] ()
+
+let keymapSections (model: Model) : (string * IKeyMap) list =
+  let pageSections =
+    match model.Page with
+    | SessionListPage -> [ "Sessions", SessionList.keyMap model.SessionList ]
+    | SessionViewPage viewModel -> SessionView.keymapSections viewModel
+
+  pageSections @ [ "Global", globalKeyMap ]
 
 // Not private: buildPanels drives both input routing (here) and rendering (AppView).
 let buildPanels (model: Model) : Panel list =
@@ -103,6 +122,7 @@ let init (client: FirebaseClient) (user: string) () =
     Focus = 1
     LogVisible = false
     LogModel = Log.init ()
+    ShowKeymap = false
     Exiting = false
   },
   Cmd.map SessionListMsg listCmd
@@ -150,24 +170,33 @@ let private handleSessionViewOutMsg
 let update (deps: Dependencies) (user: string) msg model =
   match msg with
   | InputMsg(Input.KeyPressed key) ->
-    let panels = buildPanels model
-    let focusedPanel = panels |> List.tryFind (fun p -> p.Number = model.Focus)
-    let capturing = focusedPanel |> Option.exists (_.CapturesInput)
-
-    match capturing with
+    match model.ShowKeymap with
     | true ->
-      focusedPanel
-      |> Option.bind (fun p -> p.HandleKey key)
-      |> Option.map (fun msg -> model, Cmd.ofMsg msg)
-      |> Option.defaultValue (model, [])
+      match key.Key, key.KeyChar with
+      | ConsoleKey.Escape, _
+      | _, '?'
+      | _, 'q' -> model, Cmd.ofMsg ToggleKeymap
+      | _ -> model, []
     | false ->
-      match handleGlobalKey key with
-      | Some msg -> model, Cmd.ofMsg msg
-      | None ->
+
+      let panels = buildPanels model
+      let focusedPanel = panels |> List.tryFind (fun p -> p.Number = model.Focus)
+      let capturing = focusedPanel |> Option.exists (_.CapturesInput)
+
+      match capturing with
+      | true ->
         focusedPanel
         |> Option.bind (fun p -> p.HandleKey key)
         |> Option.map (fun msg -> model, Cmd.ofMsg msg)
         |> Option.defaultValue (model, [])
+      | false ->
+        match handleGlobalKey key with
+        | Some msg -> model, Cmd.ofMsg msg
+        | None ->
+          focusedPanel
+          |> Option.bind (fun p -> p.HandleKey key)
+          |> Option.map (fun msg -> model, Cmd.ofMsg msg)
+          |> Option.defaultValue (model, [])
 
   | SessionListMsg lMsg ->
     let listModel, listCmd, outMsg = SessionList.update lMsg model.SessionList
@@ -196,6 +225,13 @@ let update (deps: Dependencies) (user: string) msg model =
     {
       model with
           LogVisible = not model.LogVisible
+    },
+    []
+
+  | ToggleKeymap ->
+    {
+      model with
+          ShowKeymap = not model.ShowKeymap
     },
     []
 

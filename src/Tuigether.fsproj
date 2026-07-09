@@ -28,6 +28,7 @@
     <Compile Include="Dependencies.fs" />
     <Compile Include="Components/TextEditing.fs" />
     <Compile Include="Components/Log.fs" />
+    <Compile Include="Components/KeymapModal.fs" />
     <Compile Include="Components/Notes.fs" />
     <Compile Include="Components/NoteList.fs" />
     <Compile Include="Components/TodoList.fs" />
