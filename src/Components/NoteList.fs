@@ -1,7 +1,6 @@
 module NoteList
 
 open System
-open System.Runtime.InteropServices
 open Elmish
 open Firebase.Database
 open Spectre.Console
@@ -89,6 +88,12 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
       | 'k' -> Some Up
       | _ -> None
 
+let handlePaste (text: string) (model: Model) : Msg option =
+  match model.InputMode with
+  | AddingItem _
+  | EditingItem _ -> Some(Edit(TextEditing.pasteAction false text))
+  | Normal -> None
+
 let capturesInput (model: Model) =
   match model.InputMode with
   | AddingItem _
@@ -103,49 +108,6 @@ let keyMap (model: Model) =
     | Normal -> normalBindings
 
   KeyBinding.toKeyMap bindings model
-
-// Linux: order by display server. xclip exits non-zero under Wayland (no
-// throw), so wrong-server tool is last resort.
-let private clipboardCandidates () : (string * string) list =
-  match RuntimeInformation.IsOSPlatform OSPlatform.Windows, RuntimeInformation.IsOSPlatform OSPlatform.OSX with
-  | true, _ -> [ "clip", "" ]
-  | _, true -> [ "pbcopy", "" ]
-  | _ ->
-    let xclip = "xclip", "-selection clipboard"
-    let xsel = "xsel", "--clipboard --input"
-    let wlCopy = "wl-copy", ""
-
-    match Environment.GetEnvironmentVariable "WAYLAND_DISPLAY" with
-    | null
-    | "" -> [ xclip; xsel; wlCopy ]
-    | _ -> [ wlCopy; xclip; xsel ]
-
-let private tryCopyWith (fileName: string) (arguments: string) (text: string) : bool =
-  try
-    let psi = Diagnostics.ProcessStartInfo()
-    psi.FileName <- fileName
-    psi.Arguments <- arguments
-    psi.UseShellExecute <- false
-    psi.RedirectStandardInput <- true
-
-    use proc = Diagnostics.Process.Start psi
-    proc.StandardInput.Write text
-    proc.StandardInput.Close()
-    proc.WaitForExit()
-    proc.ExitCode = 0
-  with _ ->
-    false
-
-let private copyToClipboard (text: string) : Result<string, string> =
-  let rec attempt remaining =
-    match remaining with
-    | [] -> Error "no working clipboard tool found (install xclip, xsel, or wl-copy)"
-    | (fileName, arguments) :: rest ->
-      match tryCopyWith fileName arguments text with
-      | true -> Ok fileName
-      | false -> attempt rest
-
-  attempt (clipboardCandidates ())
 
 let init (client: FirebaseClient) (sessionId: string) = {
   InputMode = Normal
@@ -296,7 +258,7 @@ let update msg model =
     match model.Items with
     | [] -> ()
     | _ ->
-      match copyToClipboard model.Items.[model.SelectedIndex].Text with
+      match Clipboard.copy model.Items.[model.SelectedIndex].Text with
       | Ok tool -> Log.line (sprintf "copied list item to clipboard via %s" tool)
       | Error message -> Log.line (sprintf "clipboard copy failed: %s" message)
 

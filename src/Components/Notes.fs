@@ -83,6 +83,11 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | 'i' -> Some EnterInsert
     | _ -> None
 
+let handlePaste (text: string) (model: Model) : Msg option =
+  match model.InputMode with
+  | Insert -> Some(Edit(TextEditing.pasteAction true text))
+  | Normal -> None
+
 let capturesInput (model: Model) =
   match model.InputMode with
   | Insert -> true

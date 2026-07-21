@@ -266,6 +266,11 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | _ -> TextEditing.keyToAction false key |> Option.map Edit
   | Browsing -> KeyBinding.handleKey browsingBindings key model
 
+let handlePaste (text: string) (model: Model) : Msg option =
+  match model.InputMode with
+  | Naming _ -> Some(Edit(TextEditing.pasteAction false text))
+  | Browsing -> None
+
 let keyMap (model: Model) =
   match model.InputMode with
   | Naming _ -> KeyBinding.toKeyMap namingBindings model

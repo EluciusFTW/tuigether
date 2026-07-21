@@ -8,6 +8,7 @@ open Spectre.Tui
 // persisted editor widget, so the key bindings and dispatch live in one place.
 type EditAction =
   | Insert of char
+  | InsertText of string
   | Backspace
   | DeleteForward
   | NewLine
@@ -35,10 +36,16 @@ let keyToAction (multiLine: bool) (key: ConsoleKeyInfo) : EditAction option =
   | _ when not (Char.IsControl key.KeyChar) -> Some(Insert key.KeyChar)
   | _ -> None
 
+// True for the paste key (Ctrl+V). Callers read the OS clipboard and insert its
+// contents as one block rather than typing character by character.
+let isPasteKey (key: ConsoleKeyInfo) : bool =
+  key.Modifiers.HasFlag ConsoleModifiers.Control && key.Key = ConsoleKey.V
+
 // Apply an action to the widget, mutating its caret/buffer in place.
 let apply (action: EditAction) (editor: TextBoxWidget) : unit =
   match action with
   | Insert c -> editor.Insert(string c)
+  | InsertText s -> editor.Insert s
   | Backspace -> editor.DeleteBackward()
   | DeleteForward -> editor.DeleteForward()
   | NewLine -> editor.InsertNewLine()
@@ -54,6 +61,7 @@ let apply (action: EditAction) (editor: TextBoxWidget) : unit =
 let isMutation (action: EditAction) : bool =
   match action with
   | Insert _
+  | InsertText _
   | Backspace
   | DeleteForward
   | NewLine -> true
@@ -63,3 +71,14 @@ let isMutation (action: EditAction) : bool =
   | MoveDown
   | MoveHome
   | MoveEnd -> false
+
+// Build a paste edit. Single-line callers strip newlines so a pasted multi-line
+// blob can't span lines or trigger confirm; multiline keeps them (the widget
+// normalizes them on insert).
+let pasteAction (multiLine: bool) (text: string) : EditAction =
+  let cleaned =
+    match multiLine with
+    | true -> text
+    | false -> text.Replace("\r", "").Replace("\n", "")
+
+  InsertText cleaned

@@ -43,6 +43,7 @@ type Panel = {
   Widget: IWidget
   KeyMap: IKeyMap
   HandleKey: ConsoleKeyInfo -> Msg option
+  HandlePaste: string -> Msg option
 }
 
 let exitEvent = new Threading.ManualResetEventSlim false
@@ -74,6 +75,7 @@ let buildPanels (model: Model) : Panel list =
         Widget = SessionList.widget model.SessionList
         KeyMap = SessionList.keyMap model.SessionList
         HandleKey = fun key -> SessionList.handleKey key model.SessionList |> Option.map SessionListMsg
+        HandlePaste = fun text -> SessionList.handlePaste text model.SessionList |> Option.map SessionListMsg
       }
     ]
   | SessionViewPage viewModel -> [
@@ -87,6 +89,7 @@ let buildPanels (model: Model) : Panel list =
         Widget = SessionView.widget viewModel
         KeyMap = SessionView.keyMap viewModel
         HandleKey = fun key -> SessionView.handleKey key viewModel |> Option.map SessionViewMsg
+        HandlePaste = fun text -> SessionView.handlePaste text viewModel |> Option.map SessionViewMsg
       }
     ]
 
@@ -156,10 +159,24 @@ let update (deps: Dependencies) (user: string) msg model =
 
     match capturing with
     | true ->
-      focusedPanel
-      |> Option.bind (fun p -> p.HandleKey key)
-      |> Option.map (fun msg -> model, Cmd.ofMsg msg)
-      |> Option.defaultValue (model, [])
+      // Ctrl+V reads the OS clipboard and inserts it in one block via the
+      // focused editor's HandlePaste; any other key takes the normal path.
+      match TextEditing.isPasteKey key with
+      | true ->
+        match Clipboard.read () with
+        | Ok text ->
+          focusedPanel
+          |> Option.bind (fun p -> p.HandlePaste text)
+          |> Option.map (fun msg -> model, Cmd.ofMsg msg)
+          |> Option.defaultValue (model, [])
+        | Error message ->
+          Log.line (sprintf "clipboard paste failed: %s" message)
+          model, []
+      | false ->
+        focusedPanel
+        |> Option.bind (fun p -> p.HandleKey key)
+        |> Option.map (fun msg -> model, Cmd.ofMsg msg)
+        |> Option.defaultValue (model, [])
     | false ->
       match handleGlobalKey key with
       | Some msg -> model, Cmd.ofMsg msg

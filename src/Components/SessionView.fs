@@ -268,6 +268,21 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
         | 4 -> NoteList.handleKey key model.NoteList |> Option.map NoteListMsg
         | _ -> None)
 
+let handlePaste (text: string) (model: Model) : Msg option =
+  // The drive-log overlay is not a text editor, so paste is a no-op while it's open.
+  match model.ShowDriveLog with
+  | true -> None
+  | false ->
+    match capturesInput model with
+    | true ->
+      match model.Focus with
+      | 1 -> SessionInfo.handlePaste text model.SessionInfo |> Option.map SessionInfoMsg
+      | 2 -> Notes.handlePaste text model.Notes |> Option.map NotesMsg
+      | 3 -> TodoList.handlePaste text model.TodoList |> Option.map TodoListMsg
+      | 4 -> NoteList.handlePaste text model.NoteList |> Option.map NoteListMsg
+      | _ -> None
+    | false -> None
+
 let private shiftTabHelp: IKeyMap =
   { new IKeyMap with
       member _.Help() =
