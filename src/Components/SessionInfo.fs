@@ -66,6 +66,7 @@ type Msg =
   | StateSaved
   | BeginCreateBranch
   | BranchTypeChar of char
+  | BranchTypeText of string
   | BranchTypeBackspace
   | ConfirmBranch
   | DismissBranchPopup
@@ -279,6 +280,13 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     | ConsoleKey.Enter
     | ConsoleKey.Escape -> Some DismissSyncPopup
     | _ -> None
+
+let handlePaste (text: string) (model: Model) : Msg option =
+  match model.InputMode with
+  | Insert -> Some(Edit(TextEditing.pasteAction true text))
+  | GoalPopup -> Some(Edit(TextEditing.pasteAction false text))
+  | BranchPopup { Stage = EditingName _ } -> Some(BranchTypeText text)
+  | _ -> None
 
 let capturesInput (model: Model) =
   match model.InputMode with
@@ -531,6 +539,23 @@ let update msg model =
               BranchPopup {
                 popup with
                     Name = popup.Name + string c
+                    Stage = EditingName None
+              }
+      },
+      []
+    | _ -> model, []
+  | BranchTypeText text ->
+    match model.InputMode with
+    | BranchPopup({ Stage = EditingName _ } as popup) ->
+      // Branch name is single-line; drop any pasted newlines.
+      let cleaned = text.Replace("\r", "").Replace("\n", "")
+
+      {
+        model with
+            InputMode =
+              BranchPopup {
+                popup with
+                    Name = popup.Name + cleaned
                     Stage = EditingName None
               }
       },

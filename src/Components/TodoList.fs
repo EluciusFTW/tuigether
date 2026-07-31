@@ -98,6 +98,12 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
       | 'k' -> Some Up
       | _ -> None
 
+let handlePaste (text: string) (model: Model) : Msg option =
+  match model.InputMode with
+  | AddingItem _
+  | EditingItem _ -> Some(Edit(TextEditing.pasteAction false text))
+  | Normal -> None
+
 let capturesInput (model: Model) =
   match model.InputMode with
   | AddingItem _
