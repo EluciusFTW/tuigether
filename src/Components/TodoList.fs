@@ -214,20 +214,26 @@ let update msg model =
       |> withPlaceholder "Enter item text…"
       |> focused
 
-    { model with InputMode = AddingItem editor }, []
+    {
+      model with
+          InputMode = AddingItem editor
+    },
+    []
   | StartEdit ->
     match model.Items with
     | [] -> model, []
     | _ ->
       let item = model.Items.[model.SelectedIndex]
 
-      let editor =
-        textBox item.Text
-        |> withMode TextBoxMode.SingleLine
-        |> focused
+      let editor = textBox item.Text |> withMode TextBoxMode.SingleLine |> focused
 
       editor.MoveToEnd()
-      { model with InputMode = EditingItem(item.Id, editor) }, []
+
+      {
+        model with
+            InputMode = EditingItem(item.Id, editor)
+      },
+      []
   | Edit action ->
     match model.InputMode with
     | AddingItem editor
@@ -385,8 +391,9 @@ let subscriptions (model: Model) =
 
 // Completed items render grey, still-to-do items green. The selected row inverts
 // to black-on-(state colour) — legible and calm, instead of the default list
-// item's bright yellow-on-blue.
-type private TodoListItem(text: string, completed: bool) =
+// item's bright yellow-on-blue. Items carry pre-wrapped lines so long text folds
+// into a hanging-indented block instead of being truncated.
+type private TodoListItem(lines: string list, completed: bool) =
   interface IListWidgetItem with
     member _.CreateText(isSelected) =
       let stateColor =
@@ -399,46 +406,57 @@ type private TodoListItem(text: string, completed: bool) =
         | true -> Style(Color.Black, stateColor)
         | false -> Style(stateColor)
 
-      Text(LineExtensions.FromString(text, style))
+      TextExtensions.FromString(String.Join("\n", lines), style)
+
+// The chevron column is reserved on every row, so it is not available for text.
+let private highlightSymbol = "> "
+
+let private items (model: Model) (width: int) (height: int) =
+  model.Items
+  |> List.map (fun item ->
+    let checkbox =
+      match item.Completed with
+      | true -> "[x] "
+      | false -> "[ ] "
+
+    let lines = Str.wrapHanging checkbox width item.Text |> Str.capLines height width
+
+    TodoListItem(lines, item.Completed))
 
 let widget (model: Model) (isFocused: bool) : IWidget =
-  let items =
-    model.Items
-    |> List.map (fun item ->
-      let checkbox =
-        match item.Completed with
-        | true -> "[x] "
-        | false -> "[ ] "
+  // Wrapping needs the width the panel actually hands us, which is only known
+  // once we are rendering — so the list is built inside Render.
+  let renderList (ctx: RenderContext) =
+    let items = items model (ctx.Viewport.Width - highlightSymbol.Length) ctx.Viewport.Height
 
-      TodoListItem(checkbox + item.Text, item.Completed))
+    let listWidget =
+      list items
+      |> withSelectedIndex (
+        match isFocused, items with
+        | false, _
+        | _, [] -> None
+        | _ -> Some model.SelectedIndex
+      )
+      |> withHighlightSymbol (LineExtensions.FromString(highlightSymbol, Style Color.Green))
+      |> wrapAround
 
-  let listWidget =
-    list items
-    |> withSelectedIndex (
-      match isFocused, items with
-      | false, _
-      | _, [] -> None
-      | _ -> Some model.SelectedIndex
-    )
-    |> withHighlightSymbol (LineExtensions.FromString("> ", Style Color.Green))
-    |> wrapAround
-    :> IWidget
+    ctx.Render(listWidget)
 
-  let editorPopup (title: string) (editor: TextBoxWidget) =
-    { new IWidget with
-        member _.Render(ctx) =
-          ctx.Render(listWidget)
+  let renderEditorPopup (ctx: RenderContext) (title: string) (editor: TextBoxWidget) =
+    let boxedInput =
+      box (Look.fromColor Color.Green)
+      |> withTitle title
+      |> withInnerWidget (editor :> IWidget)
+      :> IWidget
 
-          let boxedInput =
-            box (Look.fromColor Color.Green)
-            |> withTitle title
-            |> withInnerWidget (editor :> IWidget)
-            :> IWidget
+    ctx.Render(popup 44 3 |> withPopupContent boxedInput :> IWidget)
 
-          ctx.Render(popup 44 3 |> withPopupContent boxedInput :> IWidget)
-    }
+  { new IWidget with
+      member _.Render(ctx) =
+        renderList ctx
 
-  match model.InputMode with
-  | AddingItem editor -> editorPopup "New item" editor
-  | EditingItem(_, editor) -> editorPopup "Edit item" editor
-  | Normal -> listWidget
+        match model.InputMode with
+        | AddingItem editor -> renderEditorPopup ctx "New item" editor
+        | EditingItem(_, editor) -> renderEditorPopup ctx "Edit item" editor
+        | Normal -> ()
+  }

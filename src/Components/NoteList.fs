@@ -162,20 +162,26 @@ let update msg model =
       |> withPlaceholder "Enter item text…"
       |> focused
 
-    { model with InputMode = AddingItem editor }, []
+    {
+      model with
+          InputMode = AddingItem editor
+    },
+    []
   | StartEdit ->
     match model.Items with
     | [] -> model, []
     | _ ->
       let item = model.Items.[model.SelectedIndex]
 
-      let editor =
-        textBox item.Text
-        |> withMode TextBoxMode.SingleLine
-        |> focused
+      let editor = textBox item.Text |> withMode TextBoxMode.SingleLine |> focused
 
       editor.MoveToEnd()
-      { model with InputMode = EditingItem(item.Id, editor) }, []
+
+      {
+        model with
+            InputMode = EditingItem(item.Id, editor)
+      },
+      []
   | Edit action ->
     match model.InputMode with
     | AddingItem editor
@@ -291,8 +297,10 @@ let subscriptions (model: Model) =
   Firebase.NoteList.subscription model.Persistence.Client model.Persistence.SessionId RemoteStateLoaded
 
 // List items render green, matching the Todo widget. The selected row inverts
-// to black-on-green instead of the default list item's yellow-on-blue.
-type private NoteListItem(text: string) =
+// to black-on-green instead of the default list item's yellow-on-blue. Items
+// carry pre-wrapped lines so long text folds into a hanging-indented block
+// instead of being truncated.
+type private NoteListItem(lines: string list) =
   interface IListWidgetItem with
     member _.CreateText(isSelected) =
       let style =
@@ -300,37 +308,47 @@ type private NoteListItem(text: string) =
         | true -> Style(Color.Black, Color.Green)
         | false -> Style(Color.Green)
 
-      Text(LineExtensions.FromString(" • " + text, style))
+      TextExtensions.FromString(String.Join("\n", lines), style)
+
+let private bullet = " • "
+
+let private items (model: Model) (width: int) (height: int) =
+  model.Items
+  |> List.map (fun item -> NoteListItem(Str.wrapHanging bullet width item.Text |> Str.capLines height width))
 
 let widget (model: Model) (isFocused: bool) : IWidget =
-  let items = model.Items |> List.map (fun item -> NoteListItem item.Text)
+  // Wrapping needs the width the panel actually hands us, which is only known
+  // once we are rendering — so the list is built inside Render.
+  let renderList (ctx: RenderContext) =
+    let items = items model ctx.Viewport.Width ctx.Viewport.Height
 
-  let listWidget =
-    list items
-    |> withSelectedIndex (
-      match isFocused, items with
-      | false, _
-      | _, [] -> None
-      | _ -> Some model.SelectedIndex
-    )
-    |> wrapAround
-    :> IWidget
+    let listWidget =
+      list items
+      |> withSelectedIndex (
+        match isFocused, items with
+        | false, _
+        | _, [] -> None
+        | _ -> Some model.SelectedIndex
+      )
+      |> wrapAround
 
-  let editorPopup (title: string) (editor: TextBoxWidget) =
-    { new IWidget with
-        member _.Render(ctx) =
-          ctx.Render(listWidget)
+    ctx.Render(listWidget)
 
-          let boxedInput =
-            box (Look.fromColor Color.Green)
-            |> withTitle title
-            |> withInnerWidget (editor :> IWidget)
-            :> IWidget
+  let renderEditorPopup (ctx: RenderContext) (title: string) (editor: TextBoxWidget) =
+    let boxedInput =
+      box (Look.fromColor Color.Green)
+      |> withTitle title
+      |> withInnerWidget (editor :> IWidget)
+      :> IWidget
 
-          ctx.Render(popup 44 3 |> withPopupContent boxedInput :> IWidget)
-    }
+    ctx.Render(popup 44 3 |> withPopupContent boxedInput :> IWidget)
 
-  match model.InputMode with
-  | AddingItem editor -> editorPopup "New item" editor
-  | EditingItem(_, editor) -> editorPopup "Edit item" editor
-  | Normal -> listWidget
+  { new IWidget with
+      member _.Render(ctx) =
+        renderList ctx
+
+        match model.InputMode with
+        | AddingItem editor -> renderEditorPopup ctx "New item" editor
+        | EditingItem(_, editor) -> renderEditorPopup ctx "Edit item" editor
+        | Normal -> ()
+  }
