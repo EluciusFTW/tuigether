@@ -79,6 +79,55 @@ let readRepoName () =
     | _ -> ""
   | name -> name
 
+type BranchRef = {
+  Name: string
+  // Remote-only branches (on origin but not checked out here) are offered too, so a
+  // session can be pointed at a branch a teammate just pushed.
+  IsLocal: bool
+}
+
+let private originPrefix = "origin/"
+
+let listBranches () : Async<Result<BranchRef list, string>> =
+  async {
+    return
+      match
+        runGitArgs [
+          "for-each-ref"
+          "--format=%(refname:short)"
+          "refs/heads"
+          "refs/remotes/origin"
+        ]
+      with
+      | Error e -> Error e
+      | Ok output ->
+        let names =
+          output.Split('\n')
+          |> Array.map (fun line -> line.Trim())
+          |> Array.filter (fun line -> line <> "")
+          |> Array.toList
+
+        let locals = names |> List.filter (fun name -> not (name.StartsWith originPrefix))
+        let localSet = Set.ofList locals
+
+        let remoteOnly =
+          names
+          |> List.filter (fun name -> name.StartsWith originPrefix)
+          |> List.map (fun name -> name.Substring originPrefix.Length)
+          |> List.filter (fun name -> name <> "HEAD" && not (localSet.Contains name))
+          |> List.distinct
+
+        Ok(
+          (locals |> List.map (fun name -> { Name = name; IsLocal = true }))
+          @ (remoteOnly |> List.map (fun name -> { Name = name; IsLocal = false }))
+        )
+  }
+
+let readDefaultBranch () =
+  match runGit "symbolic-ref --short refs/remotes/origin/HEAD" with
+  | Ok head when head.StartsWith originPrefix -> head.Substring originPrefix.Length
+  | _ -> "main"
+
 let createAndPushBranch (name: string) : Async<Result<unit, string>> =
   async {
     return
@@ -114,10 +163,20 @@ let private aheadBehind () : Result<int * int, string> =
       | _ -> Error(sprintf "unexpected rev-list output: %s" output)
     | _ -> Error(sprintf "unexpected rev-list output: %s" output)
 
-let private isDirty () =
+let private statusLines () =
   match runGit "status --porcelain" with
-  | Ok output -> output <> ""
-  | Error _ -> false
+  | Ok output ->
+    output.Split('\n')
+    |> Array.map (fun line -> line.Trim())
+    |> Array.filter (fun line -> line <> "")
+    |> Array.toList
+  | Error _ -> []
+
+let isWorkingTreeDirty () =
+  statusLines () |> List.isEmpty |> not
+
+let dirtyFileCount () =
+  statusLines () |> List.length
 
 let wipSync (title: string) : Async<Result<unit, string>> =
   async {
@@ -129,7 +188,7 @@ let wipSync (title: string) : Async<Result<unit, string>> =
         | Error e -> Error e
         | Ok(_, behind) when behind > 0 -> Error "behind origin — sync first"
         | Ok(ahead, _) ->
-          let dirty = isDirty ()
+          let dirty = isWorkingTreeDirty ()
 
           let commitStep =
             match dirty with
@@ -186,6 +245,149 @@ let resetToUpstream () : Async<Result<unit, string>> =
       | Error e -> Error e
       | Ok _ ->
         match runGit "reset --hard @{upstream}" with
+        | Ok _ -> Ok()
+        | Error e -> Error e
+  }
+
+// ─── Switching to the session branch ─────────────────────────────────────────
+
+type DirtyPolicy =
+  | StashAndCarry
+  | StashAndLeave
+
+type SwitchOutcome = {
+  Stashed: bool
+  Carried: bool
+  // The switch itself succeeded; `git stash pop` hit a conflict the user must resolve.
+  PopConflict: bool
+  // A ff-only pull that failed after the checkout. Reported, not fatal.
+  PullError: string option
+}
+
+let private hasUpstream () =
+  match runGit "rev-parse --abbrev-ref --symbolic-full-name @{upstream}" with
+  | Ok upstream -> upstream <> ""
+  | Error _ -> false
+
+let private refExists (reference: string) =
+  match runGitArgs [ "rev-parse"; "--verify"; "--quiet"; reference ] with
+  | Ok _ -> true
+  | Error _ -> false
+
+type SwitchFailure = {
+  Message: string
+  // git refused the checkout itself because local changes would be clobbered — the
+  // one failure where stashing first actually helps, so the caller can offer that
+  // instead of treating it as fatal.
+  BlockedByLocalChanges: bool
+}
+
+let private plainFailure (message: string) = {
+  Message = message
+  BlockedByLocalChanges = false
+}
+
+// git's own wording when a checkout would overwrite something. Anything else it
+// refuses for (a bad ref, a broken index) stashing would not fix.
+let private isBlockedByLocalChanges (message: string) =
+  message.Contains("would be overwritten by", StringComparison.OrdinalIgnoreCase)
+  || message.Contains("commit your changes or stash them", StringComparison.OrdinalIgnoreCase)
+
+// `policy = None` means "do not touch the working tree" — the checkout is simply
+// attempted. git allows one with local changes as long as none of them are in the
+// way (untracked files usually are not), so it decides, and only its refusal sends
+// the caller back to the user to ask about stashing.
+let switchToBranch (policy: DirtyPolicy option) (branch: BranchRef) : Async<Result<SwitchOutcome, SwitchFailure>> =
+  async {
+    return
+      match runGit "fetch" with
+      | Error e -> Error(plainFailure e)
+      | Ok _ ->
+        let stashStep =
+          match policy, isWorkingTreeDirty () with
+          | None, _
+          | _, false -> Ok false
+          | Some _, true ->
+            // -u so untracked files travel with the switch too.
+            match
+              runGitArgs [
+                "stash"
+                "push"
+                "-u"
+                "-m"
+                sprintf "tuigether: switching to %s" branch.Name
+              ]
+            with
+            | Error e -> Error(plainFailure e)
+            | Ok _ -> Ok true
+
+        match stashStep with
+        | Error e -> Error e
+        | Ok stashed ->
+          let checkoutArgs =
+            match branch.IsLocal with
+            | true -> [ "checkout"; branch.Name ]
+            | false -> [ "checkout"; "-t"; originPrefix + branch.Name ]
+
+          match runGitArgs checkoutArgs with
+          | Error e ->
+            // Put the tree back the way we found it before reporting the failure.
+            match stashed with
+            | true -> runGit "stash pop" |> ignore
+            | false -> ()
+
+            Error {
+              Message = e
+              // Only worth offering a stash if we have not already tried one.
+              BlockedByLocalChanges = not stashed && isBlockedByLocalChanges e
+            }
+          | Ok _ ->
+            let pullError =
+              match hasUpstream () with
+              | false -> None
+              | true ->
+                match runGit "pull --ff-only" with
+                | Ok _ -> None
+                | Error e -> Some e
+
+            match stashed, policy with
+            | true, Some StashAndCarry ->
+              let popConflict =
+                match runGit "stash pop" with
+                | Ok _ -> false
+                | Error _ -> true
+
+              Ok {
+                Stashed = true
+                Carried = true
+                PopConflict = popConflict
+                PullError = pullError
+              }
+            | stashed, _ ->
+              Ok {
+                Stashed = stashed
+                Carried = false
+                PopConflict = false
+                PullError = pullError
+              }
+  }
+
+let createAndPushBranchFrom (baseBranch: string) (name: string) : Async<Result<unit, string>> =
+  async {
+    // Best-effort refresh so we branch off origin's latest; offline just falls back
+    // to the local ref.
+    let _ = runGitArgs [ "fetch"; "origin"; baseBranch ]
+
+    let baseRef =
+      match refExists (originPrefix + baseBranch) with
+      | true -> originPrefix + baseBranch
+      | false -> baseBranch
+
+    return
+      match runGitArgs [ "checkout"; "-b"; name; baseRef ] with
+      | Error e -> Error e
+      | Ok _ ->
+        match runGitArgs [ "push"; "-u"; "origin"; name ] with
         | Ok _ -> Ok()
         | Error e -> Error e
   }

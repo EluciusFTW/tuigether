@@ -448,4 +448,10 @@ let widget (model: Model) : IWidget =
 
           ctx.Render(popup w h |> withPopupContent boxed :> IWidget)
         | false -> ()
+
+        // Rendered last so it sits above the panels: the branch picker needs more
+        // rows than the info panel can give it.
+        match SessionInfo.switchOverlay model.SessionInfo with
+        | Some overlay -> ctx.Render(overlay)
+        | None -> ()
   }
