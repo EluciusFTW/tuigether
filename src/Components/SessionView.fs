@@ -171,7 +171,6 @@ let private outerBindings: KeyBinding<Model, Msg> list = [
     Description = "next panel"
     Message = Some(FocusPanel(model.Focus % 5 + 1))
   })
-  KeyBinding.create 'j' "journey log" ToggleDriveLog
 ]
 
 let private panelCount = 5
@@ -200,6 +199,7 @@ let capturesInput (model: Model) =
 let private stageHelp (model: Model) =
   match model.Journey.Timer.State with
   | Timer.Running -> "stop"
+  | Timer.Paused -> "start"
   | Timer.Idle ->
     match model.Journey.ActiveDriver with
     | None -> "start"
@@ -211,23 +211,22 @@ let private canFastForward (model: Model) =
   | Timer.Running -> true
   | _ -> false
 
-let private pauseHelp (model: Model) =
+let private canNext (model: Model) =
   match model.Journey.Timer.State with
-  | Timer.Running -> Some "pause"
-  | Timer.Paused -> Some "resume"
-  | _ -> None
+  | Timer.Paused -> true
+  | _ -> false
 
-let private globalKeyToMsg (model: Model) (gMsg: GlobalKeys.Msg) : Msg =
+let private journeyKeyToMsg (model: Model) (gMsg: JourneyKeys.Msg) : Msg =
   match gMsg with
-  | GlobalKeys.StageDrive ->
+  | JourneyKeys.StageDrive ->
+    // Stop pauses the drive (keeps remaining time); `s` again resumes it.
     match model.Journey.Timer.State with
-    | Timer.Running -> JourneyMsg(Journey.TimerMsg Timer.Stop)
+    | Timer.Running -> JourneyMsg(Journey.TimerMsg Timer.Pause)
+    | Timer.Paused -> JourneyMsg(Journey.TimerMsg Timer.Start)
     | _ -> JourneyMsg Journey.SwitchDriver
-  | GlobalKeys.FastForward -> JourneyMsg(Journey.TimerMsg Timer.SkipTimer)
-  | GlobalKeys.PauseResume ->
-    match model.Journey.Timer.State with
-    | Timer.Paused -> JourneyMsg(Journey.TimerMsg Timer.Start) // resume
-    | _ -> JourneyMsg(Journey.TimerMsg Timer.Pause) // pause (no-op unless Running)
+  | JourneyKeys.FastForward -> JourneyMsg(Journey.TimerMsg Timer.SkipTimer)
+  | JourneyKeys.NextDrive -> JourneyMsg Journey.SwitchDriver
+  | JourneyKeys.ToggleDriveLog -> ToggleDriveLog
 
 let private isShiftTab (key: ConsoleKeyInfo) =
   key.Key = ConsoleKey.Tab && key.Modifiers.HasFlag(ConsoleModifiers.Shift)
@@ -252,9 +251,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
       | 4 -> NoteList.handleKey key model.NoteList |> Option.map NoteListMsg
       | _ -> None
     | false ->
-      GlobalKeys.handleKey (canFastForward model) (pauseHelp model) key
-      |> Option.map (globalKeyToMsg model)
-      |> Option.orElseWith (fun () -> tryFocusNumber key)
+      tryFocusNumber key
       |> Option.orElseWith (fun () ->
         match isShiftTab key with
         | true -> Some(FocusPanel((model.Focus + 3) % 5 + 1))
@@ -266,6 +263,9 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
         | 2 -> Notes.handleKey key model.Notes |> Option.map NotesMsg
         | 3 -> TodoList.handleKey key model.TodoList |> Option.map TodoListMsg
         | 4 -> NoteList.handleKey key model.NoteList |> Option.map NoteListMsg
+        | 5 ->
+          JourneyKeys.handleKey (canFastForward model) (canNext model) key
+          |> Option.map (journeyKeyToMsg model)
         | _ -> None)
 
 let handlePaste (text: string) (model: Model) : Msg option =
@@ -299,30 +299,38 @@ let keyMap (model: Model) : Spectre.Tui.App.IKeyMap =
         Seq.append (outer.Help()) (shiftTabHelp.Help())
   }
 
-let helpKeyMaps (model: Model) : IKeyMap list = [
-  GlobalKeys.keyMap (stageHelp model) (canFastForward model) (pauseHelp model)
-]
+let private journeyKeyMap (model: Model) : IKeyMap =
+  JourneyKeys.keyMap (stageHelp model) (canFastForward model) (canNext model)
 
-let private emptyKeyMap: IKeyMap =
-  { new IKeyMap with
-      member _.Help() =
-        Seq.empty
-  }
+let keymapSections (model: Model) : (string * IKeyMap) list =
+  let localSection =
+    match model.Focus with
+    | 1 -> [ "Info", SessionInfo.keyMap model.SessionInfo ]
+    | 2 -> [ "Notes", Notes.keyMap model.Notes ]
+    | 3 -> [ "Todo", TodoList.keyMap model.TodoList ]
+    | 4 -> [ "List", NoteList.keyMap model.NoteList ]
+    | 5 -> [ "Journey", journeyKeyMap model ]
+    | _ -> []
+
+  localSection @ [ "Session", keyMap model ]
 
 let private panelInnerLayout =
   layout "panel-inner"
   |> splitHorizontally [| layout "content"; layout "keys" |> withFixedSize (Some 1) |]
 
 let private withPanelKeys (panelWidget: IWidget) (panelKeyMap: IKeyMap) (focused: bool) : IWidget =
-  { new IWidget with
-      member _.Render(ctx) =
-        let port = getPort ctx.Viewport panelInnerLayout
-        ctx.Render(panelWidget, port "content")
+  match KeymapModal.mode with
+  | KeymapModal.Modal -> panelWidget
+  | KeymapModal.Inline ->
+    { new IWidget with
+        member _.Render(ctx) =
+          let port = getPort ctx.Viewport panelInnerLayout
+          ctx.Render(panelWidget, port "content")
 
-        match focused with
-        | true -> ctx.Render(help [ panelKeyMap ] |> leftAligned, port "keys")
-        | false -> ()
-  }
+          match focused with
+          | true -> ctx.Render(help [ panelKeyMap ] |> leftAligned, port "keys")
+          | false -> ()
+    }
 
 let private middleLayout =
   layout "middle-area"
@@ -431,7 +439,7 @@ let widget (model: Model) : IWidget =
             "Journey and Passengers"
             5
             (focusStateFor 5)
-            (withPanelKeys (Journey.widget model.Journey) emptyKeyMap (model.Focus = 5)),
+            (withPanelKeys (Journey.widget model.Journey) (journeyKeyMap model) (model.Focus = 5)),
           workPort "journey"
         )
 

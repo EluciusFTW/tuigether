@@ -253,30 +253,24 @@ let private normalBindings: KeyBinding<Model, Msg> list = [
         Description = "change branch (wrong repo)"
         Message = None
       })
-  KeyBinding.dynamic (CharKey 'S') (fun model ->
+  KeyBinding.dynamic (CharKey 'a') (fun model ->
     match isRepoOK model with
     | false -> {
-        Description = "sync branch (wrong repo)"
+        Description = "align with session (wrong repo)"
         Message = None
       }
-    | true ->
-      let help =
-        match model.LocalGitBranch = model.GitBranch with
-        | true -> "pull"
-        | false -> "sync branch"
-
-      {
-        Description = help
+    | true -> {
+        Description = "align with session"
         Message = Some BeginSync
       })
-  KeyBinding.dynamic (CharKey 'w') (fun model ->
+  KeyBinding.dynamic (CharKey 'p') (fun model ->
     match isRepoOK model && model.LocalGitBranch = model.GitBranch with
     | true -> {
-        Description = "WIP sync"
+        Description = "commits, pushes upstream and to aligned participants"
         Message = Some BeginWipSync
       }
     | false -> {
-        Description = "WIP sync (unavailable)"
+        Description = "commits, pushes upstream and to aligned participants (unavailable)"
         Message = None
       })
 ]

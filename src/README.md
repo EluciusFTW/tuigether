@@ -170,8 +170,8 @@ The session info panel shows the git repository and branch that the session is a
 | Key | Condition | Action |
 |---|---|---|
 | `b` | repo matches | Open popup — create a new branch locally and push it to origin; stores the branch name in the session |
-| `S` | repo matches | Sync: push if ahead on the session branch, pull if behind, or fetch + checkout if on a different branch |
-| `w` | repo matches, on session branch | WIP sync: stage all dirty files, commit as `WIP: <session title>`, and push |
+| `a` | repo matches | Align with session: push if ahead on the session branch, pull if behind, or fetch + checkout if on a different branch |
+| `p` | repo matches, on session branch | Commit, push upstream and to aligned participants: stage all dirty files, commit as `WIP: <session title>`, and push |
 
 ### Auto-pull
 
