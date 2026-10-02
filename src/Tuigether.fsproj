@@ -24,11 +24,12 @@
     <Compile Include="Keylistener.fs" />
     <Compile Include="Tick.fs" />
     <Compile Include="Keymap.fs" />
-    <Compile Include="GlobalKeys.fs" />
+    <Compile Include="JourneyKeys.fs" />
     <Compile Include="Firebase.fs" />
     <Compile Include="Dependencies.fs" />
     <Compile Include="Components/TextEditing.fs" />
     <Compile Include="Components/Log.fs" />
+    <Compile Include="Components/KeymapModal.fs" />
     <Compile Include="Components/Notes.fs" />
     <Compile Include="Components/NoteList.fs" />
     <Compile Include="Components/TodoList.fs" />

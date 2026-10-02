@@ -198,7 +198,7 @@ let update (deps: Dependencies) msg model =
     // incoming driver's segment.
     let endOutgoingCmd =
       match model.ActiveDriver, model.Timer.State with
-      | Some outgoing, Timer.Running -> logDriveCmd model Session.DriveEventType.Switched outgoing.Name
+      | Some outgoing, (Timer.Running | Timer.Paused) -> logDriveCmd model Session.DriveEventType.Switched outgoing.Name
       | _ -> Cmd.none
 
     let startIncomingCmd =
