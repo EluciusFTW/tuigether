@@ -8,14 +8,15 @@ _Make pair-programming seamless_
 
 ## Features
 
-This is a very rough scetch of what the app can do currently.
+This is a very rough sketch of what the app can do currently.
 
 ### Current features
 - Create / open / join sessions
-- Driver concept, integrated timer
-- Notes (freetext, lists), ToDo Lists
+- Driver concept, integrated timer, journey log of past drives
+- Notes (freetext, lists), ToDo lists — items are editable, with cursor movement, word wrap and paste (`Ctrl+V`)
 - System notifications
-- Git Integration: Session Repository and branches, synching between the participants
+- Git integration: session repository and branch, create and switch branches, syncing between the participants
+- Keymap overview (`?`)
 
 ### Planned features
 - Login / authentication (:D)
@@ -45,7 +46,27 @@ scripts\install.ps1 -InstallDir C:\tools # or a custom directory
 
 If the chosen directory is not already on your `PATH`, the script prints how to add it.
 
-## tuigether environment variables
+## Configuration
+
+On first run tuigether creates a template config file and exits:
+
+- **Linux / macOS:** `~/.config/tuigether/config.json`
+- **Windows:** `%APPDATA%\tuigether\config.json`
+
+```json
+{
+  "firebaseUrl": "",
+  "firebaseSecret": "",
+  "tuigetherUser": "",
+  "notificationsEnabled": true
+}
+```
+
+`notificationsEnabled` turns system notifications on or off.
+
+### Environment variables
+
+Environment variables take precedence over the config file. The required values must be set in at least one of the two.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
@@ -55,6 +76,8 @@ If the chosen directory is not already on your `PATH`, the script prints how to 
 | `TUIGETHER_AVATAR` | no | random pick | Preferred avatar name; falls back to random if unset or unknown. |
 | `TUIGETHER_LOG_DIR` | no | `./logs` | Directory where daily log files are written. |
 | `TUIGETHER_LOG_RETENTION_DAYS` | no | `14` | Days of log history to keep. Older files are deleted on startup. `0` keeps today only. |
+
+For architecture notes and a deeper look at the git integration, see [src/README.md](src/README.md).
 
 ## License
 Copyright © Guy Buss, Daniel Muckelbauer

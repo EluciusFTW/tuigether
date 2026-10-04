@@ -7,21 +7,15 @@ Features: shared Pomodoro timer, driver rotation, collaborative notes, todo list
 ## Running
 
 ```bash
-# from the SpectreTuff repo root
-dotnet run --project src/tuigether
+# from the repo root
+dotnet run --project src
 ```
 
-To install as a standalone binary to `~/.local/bin/tuigether`, run the Claude command:
-
-```
-/install-tuigether
-```
-
-This builds a single-file framework-dependent Release binary and copies it into place.
+To install as a standalone binary on your `PATH`, use the install scripts (`scripts/install.sh` or `scripts/install.ps1`); see the [root README](../README.md#installing-tuigether).
 
 ## Configuration
 
-On first run the app creates a template config file at the platform default location:
+On first run the app creates a template config file at the platform default location and exits:
 
 - **Linux / macOS**: `~/.config/tuigether/config.json`
 - **Windows**: `%APPDATA%\tuigether\config.json`
@@ -30,7 +24,8 @@ On first run the app creates a template config file at the platform default loca
 {
   "firebaseUrl": "https://your-project.firebaseio.com",
   "firebaseSecret": "your-auth-secret",
-  "tuigetherUser": "your-username"
+  "tuigetherUser": "your-username",
+  "notificationsEnabled": true
 }
 ```
 
@@ -122,12 +117,14 @@ Application.Model
 │   ├── connectedUsers : Map<string, Set<string>>
 │   └── inputMode : Browsing | Naming
 └── SessionView.Model
-    ├── Notes.Model
-    │   ├── noteMode : Freetext | List
-    │   ├── inputMode : Normal | Insert | AddingItem
+    ├── Notes.Model               (freetext)
+    │   ├── inputMode : Normal | Insert
     │   └── lock : { owner; lockedAt } option
+    ├── NoteList.Model            (list notes)
+    │   └── inputMode : Normal | AddingItem | EditingItem
     ├── TodoList.Model
     ├── SessionInfo.Model
+    ├── DriveLog.Model            (journey log overlay)
     └── Journey.Model
         └── Timer.Model
             ├── phase : Work | Break
@@ -137,16 +134,18 @@ Application.Model
 
 ### Message routing example — a keypress reaching the timer
 
+Resuming a paused drive with `s` while the journey panel has focus:
+
 ```
-KeyPressed Space
+KeyPressed 's'
     │
     ▼  Application.update
-InputMsg(KeyPressed Space)
-    │  dispatch to focused panel
-    ▼  SessionView.update
-SessionViewMsg(JourneyMsg(...))
+InputMsg(KeyPressed 's')
+    │  dispatch to the session view
+    ▼  SessionView.handleKey → JourneyKeys.handleKey
+SessionViewMsg(JourneyMsg(TimerMsg Start))
     │
-    ▼  Journey.update → Timer.update
+    ▼  SessionView.update → Journey.update → Timer.update
 TimerMsg Start
     │
     ▼  Timer.update
@@ -161,7 +160,7 @@ TimerMsg Start
 The session info panel shows the git repository and branch that the session is associated with. On joining, each client reads its local repo name and current branch and compares them against the session's stored values. A mismatch is highlighted in red.
 
 ```
-  Repo:    SpectreTuff
+  Repo:    tuigether
   Branch:  feature/firebase [red](main)[/]   ← local branch differs from session branch
 ```
 
@@ -169,7 +168,8 @@ The session info panel shows the git repository and branch that the session is a
 
 | Key | Condition | Action |
 |---|---|---|
-| `b` | repo matches | Open popup — create a new branch locally and push it to origin; stores the branch name in the session |
+| `n` | repo matches | Open popup — create a new branch locally and push it to origin; stores the branch name in the session |
+| `c` | repo matches | Open popup — choose a branch to switch to; if there are local changes, choose to stash and carry them over (`s`) or stash and leave them behind (`l`) |
 | `a` | repo matches | Align with session: push if ahead on the session branch, pull if behind, or fetch + checkout if on a different branch |
 | `p` | repo matches, on session branch | Commit, push upstream and to aligned participants: stage all dirty files, commit as `WIP: <session title>`, and push |
 
@@ -178,7 +178,7 @@ The session info panel shows the git repository and branch that the session is a
 When a teammate does a WIP sync, every other client that is on the same repo and the same branch automatically pulls the changes in the background (a sync popup appears briefly while it runs).
 
 ```
-  Teammate presses w              Your client
+  Teammate presses p              Your client
   ──────────────────              ───────────
   stage + commit + push  ──────▶  Firebase: LastWipPushAt updated
                                         │
@@ -207,7 +207,7 @@ EnterInsert              ExitInsert
   inputMode                inputMode
   = Insert                 = Normal
       │
-  TypeChar / TypeBackspace
+  Edit (TextEditing.EditAction)
       │
   MaybeSaveFreetext       ←── debounced 300 ms
   (token-gated)
