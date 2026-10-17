@@ -94,7 +94,7 @@ Three external sources feed into the top-level `Msg` DU:
 ```
   Keyboard input          Firebase streams          Internal timers
   ─────────────           ───────────────           ───────────────
-  Input.KeyPressed        SessionEvent              Tick (1 s)
+  InputMsg                SessionEvent              Tick (1 s)
         │                 RemoteStateLoaded         FlashTick (200 ms)
         │                 UpdateSession             BreakTick (500 ms)
         │                       │                   MaybeSaveFreetext (300 ms)

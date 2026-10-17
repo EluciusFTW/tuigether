@@ -5,7 +5,7 @@ open Elmish
 open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
-open Keymap
+open SpectreTuff.Keymap
 open Locking
 open SpectreTuff
 open SpectreTuff.Layout

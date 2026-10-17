@@ -1,7 +1,7 @@
 module JourneyKeys
 
 open System
-open Keymap
+open SpectreTuff.Keymap
 
 type Msg =
   | StageDrive

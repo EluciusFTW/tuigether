@@ -57,11 +57,4 @@ type AppView(model: Model) =
         | true -> ctx.Render(KeymapModal.widget (keymapSections model))
         | false -> ()
 
-// Spectre.Tui's AnsiTerminal keeps mutable buffer/state shared across writes
-// and is not thread-safe. Subscription callbacks (Firebase observables, async
-// completions) can dispatch from thread-pool threads, so view may be invoked
-// concurrently. Serialize draws here.
-let private renderLock = obj ()
-
-let view (renderer: Renderer) (model: Model) _dispatch =
-  lock renderLock (fun () -> renderer.Draw(fun ctx _ -> ctx.Render(AppView model)))
+let view (model: Model) _dispatch = AppView model

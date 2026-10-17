@@ -1,5 +1,6 @@
 open System
 open Dependencies
+open SpectreTuff.Elmish
 
 match Config.load () with
 | Error message ->
@@ -12,18 +13,6 @@ match Config.load () with
       Secret = settings.FirebaseSecret
     }
 
-  let terminal = Spectre.Tui.Terminal.Create()
-  // Work around ConPTY alt-screen sizing bug: exit and re-enter alt-screen
-  // so ConPTY allocates the buffer with the real window dimensions.
-  Console.Write "\x1b[?1049l"
-  Console.Out.Flush()
-  System.Threading.Thread.Sleep 30
-  Console.Write "\x1b[?1049h"
-  Console.Out.Flush()
-
-  let renderer = Spectre.Tui.Renderer terminal
-  renderer.NoTargetFps()
-
   let notify =
     match settings.NotificationsEnabled with
     | true -> Notification.send
@@ -34,13 +23,10 @@ match Config.load () with
   Elmish.Program.mkProgram
     (Application.init client settings.TuigetherUser)
     (Application.update deps settings.TuigetherUser)
-    (AppView.view renderer)
+    AppView.view
   |> Elmish.Program.withSubscription (fun model ->
-    Input.subscription Application.InputMsg model
-    @ Tick.subscription (TimeSpan.FromMilliseconds 200.0) Application.Tick model
+    Subscriptions.keys Application.InputMsg
+    @ Subscriptions.tick (TimeSpan.FromMilliseconds 200.0) Application.Tick
     @ Application.subscriptions model)
   |> Elmish.Program.withTrace Application.traceToLog
-  |> Elmish.Program.run
-
-  Application.exitEvent.Wait()
-  Console.Clear()
+  |> Tui.run

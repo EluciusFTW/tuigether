@@ -6,6 +6,8 @@ open Elmish
 open Firebase.Database
 open Spectre.Tui
 open Spectre.Tui.App
+open SpectreTuff
+open SpectreTuff.Elmish
 open SpectreTuff.Layout
 open SpectreTuff.Widgets
 
@@ -26,7 +28,7 @@ type Model = {
 }
 
 type Msg =
-  | InputMsg of Input.Msg
+  | InputMsg of ConsoleKeyInfo
   | SessionListMsg of SessionList.Msg
   | SessionViewMsg of SessionView.Msg
   | LeaveFinalized
@@ -47,8 +49,6 @@ type Panel = {
   HandleKey: ConsoleKeyInfo -> Msg option
   HandlePaste: string -> Msg option
 }
-
-let exitEvent = new Threading.ManualResetEventSlim false
 
 // The global keys' behavior and their help-bar documentation are derived from a single
 // binding list, so a key and its description can never drift apart.
@@ -172,7 +172,7 @@ let private handleSessionViewOutMsg
 
 let update (deps: Dependencies) (user: string) msg model =
   match msg with
-  | InputMsg(Input.KeyPressed key) ->
+  | InputMsg key ->
     match model.ShowKeymap with
     | true ->
       match key.Key, key.KeyChar with
@@ -233,9 +233,7 @@ let update (deps: Dependencies) (user: string) msg model =
 
   | LeaveFinalized ->
     match model.Exiting with
-    | true ->
-      exitEvent.Set()
-      model, []
+    | true -> model, TuiCmd.exit
     | false -> model, []
 
   | ToggleLog ->
@@ -257,9 +255,7 @@ let update (deps: Dependencies) (user: string) msg model =
   | Exit ->
     match model.Page, model.Exiting with
     | SessionViewPage _, false -> { model with Exiting = true }, Cmd.ofMsg (SessionViewMsg SessionView.GoBack)
-    | _ ->
-      exitEvent.Set()
-      model, []
+    | _ -> model, TuiCmd.exit
 
 let subscriptions (model: Model) =
   match model.Page with

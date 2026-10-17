@@ -7,7 +7,7 @@ open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open Spectre.Tui.App
-open Keymap
+open SpectreTuff.Keymap
 open SpectreTuff
 open SpectreTuff.Layout
 open SpectreTuff.Widgets
