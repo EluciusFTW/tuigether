@@ -453,6 +453,17 @@ let private lobbyLines (model: Model) =
   [ Text.line [ Text.span "" ] ]
   @ [ for color, t in text @ error -> line color (" " + t) ]
 
+// Draws each line as-is at its row. A paragraph wraps lines and drops whitespace-only
+// spans, and the arena is built from those: floor and pillars are blank, background-
+// coloured cells.
+let private fixedLines (lines: TextLine list) : IWidget =
+  { new IWidget with
+      member _.Render(ctx: RenderContext) =
+        lines
+        |> List.truncate ctx.Viewport.Height
+        |> List.iteri (fun row line -> ctx.SetLine(0, row, line, ctx.Viewport.Width, Nullable()) |> ignore)
+  }
+
 let view (model: Model) _dispatch : IWidget =
   let title, lines =
     match model.Running with
@@ -464,7 +475,7 @@ let view (model: Model) _dispatch : IWidget =
         let boxed =
           box (Look.fromColor Color.OrangeRed1)
           |> withTitle title
-          |> withInnerWidget (paragraph lines :> IWidget)
+          |> withInnerWidget (fixedLines lines)
           :> IWidget
 
         ctx.Render(
