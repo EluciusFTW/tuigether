@@ -15,7 +15,7 @@ public static class DeleteSessionEndpoint
 
     // The Archived event makes Marten archive the stream in the same transaction.
     // The events stay in the database for statistics.
-    [WolverinePost("/api/sessions/delete")]
+    [WolverinePost(CommandRoutes.DeleteSession)]
     [EmptyResponse]
     public static (Events, BroadcastSessionChanged) Post(
         DeleteSession command,

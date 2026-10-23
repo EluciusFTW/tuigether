@@ -11,7 +11,12 @@
     <PackageReference Include="EluciusFTW.Tui48" Version="0.1.3" />
     <PackageReference Include="EluciusFTW.Tuisweeper" Version="0.1.1" />
     <PackageReference Include="FirebaseDatabase.net" Version="5.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.13" />
     <PackageReference Update="FSharp.Core" Version="10.1.402" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../server/Tuigether.Contracts/Tuigether.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,9 +33,10 @@
     <Compile Include="Backend.fs" />
     <Compile Include="Firebase.fs" />
     <Compile Include="FirebaseBackend.fs" />
+    <Compile Include="Components/Log.fs" />
+    <Compile Include="ServerBackend.fs" />
     <Compile Include="Dependencies.fs" />
     <Compile Include="Components/TextEditing.fs" />
-    <Compile Include="Components/Log.fs" />
     <Compile Include="Components/KeymapModal.fs" />
     <Compile Include="Components/Notes.fs" />
     <Compile Include="Components/NoteList.fs" />

@@ -12,14 +12,23 @@ match Config.load () with
     | true -> Notification.send
     | false -> fun _ -> ()
 
-  let deps: Dependencies = {
-    Backend =
+  let backend =
+    match settings.Backend with
+    | Config.FirebaseMode firebase ->
       FirebaseBackend.create {
-        Url = settings.FirebaseUrl
-        Secret = settings.FirebaseSecret
+        Url = firebase.Url
+        Secret = firebase.Secret
       }
-    Notify = notify
-  }
+    | Config.ServerMode server ->
+      let config: ServerBackend.Config = {
+        Url = server.Url
+        ApiKey = server.ApiKey
+        User = settings.TuigetherUser
+      }
+
+      ServerBackend.create config notify
+
+  let deps: Dependencies = { Backend = backend; Notify = notify }
 
   Elmish.Program.mkProgram
     (Application.init deps settings.TuigetherUser)
@@ -28,6 +37,6 @@ match Config.load () with
   |> Elmish.Program.withSubscription (fun model ->
     Subscriptions.keys Application.InputMsg
     @ Subscriptions.tick (TimeSpan.FromMilliseconds 200.0) Application.Tick
-    @ Application.subscriptions model)
+    @ Application.subscriptions deps model)
   |> Elmish.Program.withTrace Application.traceToLog
   |> Tui.run

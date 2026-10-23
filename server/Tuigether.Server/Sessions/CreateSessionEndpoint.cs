@@ -12,7 +12,7 @@ public static class CreateSessionEndpoint
     public static ProblemDetails Validate(CreateSession command) =>
         Problems.FromRule(SessionRules.CheckCreate(command));
 
-    [WolverinePost("/api/sessions")]
+    [WolverinePost(CommandRoutes.CreateSession)]
     public static (Created<CreateSessionResponse>, IStartStream, BroadcastSessionChanged) Post(
         CreateSession command,
         [FromHeader(Name = RequestHeaders.UserName)] string userName,

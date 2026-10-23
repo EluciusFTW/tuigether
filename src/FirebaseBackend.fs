@@ -112,6 +112,10 @@ let create (config: Firebase.Config) : Backend.Backend =
   let client = Firebase.createClient config
 
   {
+    Connection =
+      { new Backend.IConnection with
+          member _.Subscription = []
+      }
     Sessions =
       { new Backend.ISessions with
           member _.Subscription = Firebase.Sessions.subscription client id

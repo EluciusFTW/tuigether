@@ -55,14 +55,22 @@ On first run tuigether creates a template config file and exits:
 
 ```json
 {
+  "backend": "firebase",
   "firebaseUrl": "",
   "firebaseSecret": "",
+  "serverUrl": "",
+  "serverApiKey": "",
   "tuigetherUser": "",
   "notificationsEnabled": true
 }
 ```
 
-`notificationsEnabled` turns system notifications on or off.
+`backend` selects the sync backend: `firebase` (the default) or `server`. Firebase mode needs `firebaseUrl` and
+`firebaseSecret`. Server mode needs `serverUrl` and `serverApiKey`, and it ignores the Firebase settings. The Session
+list shows only the Sessions of the selected backend.
+
+`notificationsEnabled` turns system notifications on or off. In server mode, a notification also shows each action
+that the server rejects.
 
 ### Environment variables
 
@@ -70,8 +78,11 @@ Environment variables take precedence over the config file. The required values 
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `FIREBASE_URL` | yes | — | Firebase Realtime Database URL the app connects to. |
-| `FIREBASE_SECRET` | yes | — | Firebase auth secret. |
+| `TUIGETHER_BACKEND` | no | `firebase` | Sync backend: `firebase` or `server`. |
+| `FIREBASE_URL` | in Firebase mode | — | Firebase Realtime Database URL the app connects to. |
+| `FIREBASE_SECRET` | in Firebase mode | — | Firebase auth secret. |
+| `TUIGETHER_SERVER_URL` | in server mode | — | URL of one tuigether server node, for example `http://localhost:5101`. |
+| `TUIGETHER_SERVER_API_KEY` | in server mode | — | API key of the tuigether server. |
 | `TUIGETHER_USER` | yes | — | Identifier shown to other participants in a session. |
 | `TUIGETHER_AVATAR` | no | random pick | Preferred avatar name; falls back to random if unset or unknown. |
 | `TUIGETHER_LOG_DIR` | no | `./logs` | Directory where daily log files are written. |

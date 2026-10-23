@@ -1,6 +1,6 @@
 # Sync
 
-This doc tells you how tuigether clients share state through Firebase, and why the sync tripwires in
+This doc tells you how tuigether clients share state through a sync backend (Firebase or the sync server), and why the sync tripwires in
 [`CLAUDE.md`](../../CLAUDE.md) exist. Read it before you change `Backend.fs`, `Firebase.fs`, `Session.fs`, a lock, or the timer.
 
 ## Where it lives
@@ -8,7 +8,8 @@ This doc tells you how tuigether clients share state through Firebase, and why t
 - `Firebase.fs` owns every database path, read, write and subscription, in one submodule per area (`Sessions`,
   `Users`, `Notes`, `NoteList`, `Todo`, `Timer`, `History`). No other file builds a query.
 - `Backend.fs` is the seam between the components and a sync backend. `FirebaseBackend.fs` implements it with
-  `Firebase.fs`, and it is the only file that calls `Firebase.fs`. See [Backend seam](#backend-seam).
+  `Firebase.fs`, and it is the only file that calls `Firebase.fs`. `ServerBackend.fs` implements it with the sync
+  server in `server/`. See [Backend seam](#backend-seam) and [Server backend](#server-backend).
 - `Session.fs` holds the wire records.
 - Timestamps are Unix milliseconds from `Clock.nowMs ()`.
 
@@ -94,3 +95,19 @@ expires by the time limit in `Locking.fs`.
 is the debounced save while the User types, and it refreshes the lock. `EndEdit` sends the final text when Insert mode
 ends, by Esc or by the idle auto-exit, and it releases the lock. A backend without live typing makes `SaveDraft` a
 no-op.
+
+## Server backend
+
+`ServerBackend.fs` implements the seam against one node of the sync server. `Config.BackendSettings` selects it.
+
+- It sends each Command as an HTTP POST to the route in `Tuigether.Contracts.CommandRoutes`. Each request carries the
+  API key, the user name and the protocol version (`RequestHeaders`).
+- It receives snapshots over one SignalR connection for the whole app. Each message is a CloudEvents envelope, see
+  `HubProtocol.ReceiveMessage`.
+- It retries the first connect and every reconnect without limit. After each connect it joins the Session list group
+  again, and the node answers with the full Session list.
+- A refusal of the connect (wrong API key, other protocol version) is final. The backend stops retrying.
+- `IConnection` reports the connection state. The app shows it in the footer. The Firebase backend reports none.
+- The backend shows each rejected Command and each refusal as a notification with the reason of the server. The
+  components change their model only from snapshots.
+- An area that the server does not serve yet is a stub: its subscription sends nothing, and its intentions do nothing.

@@ -17,7 +17,7 @@ public sealed class CreatingASession(ServerFixture server) : ServerSpec(server)
         ThenEvents(new SessionCreated(sessionId, "Mob on the timer", "tuigether", "main", "ann", ServerFixture.Now));
         await ThenReadModel<SessionSummary>(
             sessionId,
-            new SessionSummary(sessionId, "Mob on the timer", SessionStatus.Created, "ann", "tuigether", "main"));
+            new SessionSummary(sessionId, "Mob on the timer", SessionStatus.Created, "ann", "tuigether", "main", ServerFixture.Now));
     }
 
     [Fact]

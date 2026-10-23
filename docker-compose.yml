@@ -22,6 +22,9 @@ services:
       POSTGRES_DB: tuigether
       POSTGRES_USER: tuigether
       POSTGRES_PASSWORD: tuigether
+    # For a database client on the host, for example DataGrip.
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready --username=tuigether --dbname=tuigether"]
       interval: 2s

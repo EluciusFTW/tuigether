@@ -26,6 +26,18 @@ type TimerSnapshot = {
   EndsAt: int64
 }
 
+type ConnectionState =
+  | Connecting
+  | Connected
+  // The connection broke or never came up.
+  | Disconnected
+  // The server refused the Client, for example for a wrong API key.
+  | Refused of reason: string
+
+type IConnection =
+  // A backend without a connection state of its own sends nothing.
+  abstract Subscription: Sub<ConnectionState>
+
 type ISessions =
   abstract Subscription: Sub<SessionEvent>
 
@@ -128,6 +140,7 @@ type IGit =
 
 // One group per area. Each function is one user intention.
 type Backend = {
+  Connection: IConnection
   Sessions: ISessions
   Presence: IPresence
   Driving: IDriving

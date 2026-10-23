@@ -34,6 +34,8 @@ type Model = {
   Tile: Tui48.Model
   OpenGame: Ingame option
   Exiting: bool
+  // None while the backend sends no connection state.
+  Connection: Backend.ConnectionState option
 }
 
 type Msg =
@@ -46,6 +48,7 @@ type Msg =
   | ToggleGame of Ingame
   | SweeperMsg of Tuisweeper.Msg
   | TileMsg of Tui48.Msg
+  | ConnectionChanged of Backend.ConnectionState
   | Tick
   | Exit
 
@@ -150,6 +153,7 @@ let init (deps: Dependencies) (user: string) () =
     Tile = tileModel
     OpenGame = None
     Exiting = false
+    Connection = None
   },
   Cmd.batch [
     Cmd.map SessionListMsg listCmd
@@ -311,6 +315,8 @@ let update (deps: Dependencies) (user: string) msg model =
     | Some Tui48.Closed -> { model with OpenGame = None }, tileCmd
     | None -> model, tileCmd
 
+  | ConnectionChanged state -> { model with Connection = Some state }, []
+
   | Tick -> model, []
 
   | Exit ->
@@ -318,7 +324,9 @@ let update (deps: Dependencies) (user: string) msg model =
     | SessionViewPage _, false -> { model with Exiting = true }, Cmd.ofMsg (SessionViewMsg SessionView.GoBack)
     | _ -> model, TuiCmd.exit
 
-let subscriptions (model: Model) =
+let subscriptions (deps: Dependencies) (model: Model) =
+  let connectionSubs = deps.Backend.Connection.Subscription |> Subs.map ConnectionChanged
+
   let pageSubs =
     match model.Page with
     | SessionListPage -> SessionList.subscriptions model.SessionList |> Subs.map SessionListMsg
@@ -331,7 +339,7 @@ let subscriptions (model: Model) =
     | Some TileGame -> Tui48.subscriptions model.Tile |> Sub.map "tui48" TileMsg
     | None -> []
 
-  pageSubs @ gameSubs
+  connectionSubs @ pageSubs @ gameSubs
 
 let traceToLog msg (model: Model) _ =
   match msg with

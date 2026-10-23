@@ -84,5 +84,5 @@ public sealed class WatchingTheSessionList(ServerFixture server) : ServerSpec(se
         new(sessionId, title, "tuigether", "main", "ann", ServerFixture.Now);
 
     private static SessionSummary Summary(Guid sessionId, string title) =>
-        new(sessionId, title, SessionStatus.Created, "ann", "tuigether", "main");
+        new(sessionId, title, SessionStatus.Created, "ann", "tuigether", "main", ServerFixture.Now);
 }

@@ -16,4 +16,5 @@ public sealed record SessionSummary(
     SessionStatus Status,
     string CreatedBy,
     string Repository,
-    string Branch);
+    string Branch,
+    DateTimeOffset CreatedAt);
