@@ -17,6 +17,8 @@ public static class RotateDriverRules
             _ when command.Duration <= TimeSpan.Zero => Result.Error("A Drive needs a duration longer than zero."),
             { Timer: TimerPhase.DriveRunning or TimerPhase.DrivePaused } =>
                 Result.Ok<ImmutableArray<object>>([new DriveSwitched(session.Id, user, now), .. StartDrive(session, command, user, now)]),
+            { Timer: TimerPhase.Break } =>
+                Result.Ok<ImmutableArray<object>>([new BreakSkipped(session.Id, user, now), .. StartDrive(session, command, user, now)]),
             _ => Result.Ok(StartDrive(session, command, user, now)),
         });
 

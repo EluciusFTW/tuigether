@@ -31,9 +31,13 @@ public sealed record RotateDriverBy(RotateDriver Command, string User)
 
 public static class RotateDriverHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
         RotateDriverBy request,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => RotateDriverRules.Rotate(current, request.Command, request.User, clock.GetUtcNow()));
+        TimeProvider clock)
+    {
+        var now = clock.GetUtcNow();
+        var (outcome, events, broadcast) = SessionCommand.Decide(session, current => RotateDriverRules.Rotate(current, request.Command, request.User, now));
+        return (outcome, events, broadcast, DrivingRules.ScheduleEnds(events, now));
+    }
 }

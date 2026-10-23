@@ -29,15 +29,17 @@ let private appendHistoryFor
 
 let private toTimerState (snapshot: Backend.TimerSnapshot) : Session.TimerState = {
   RemainingSeconds = snapshot.RemainingSeconds
-  IsRunning = snapshot.IsRunning
+  IsRunning = snapshot.Phase = Backend.DriveRunning
   EndsAt = snapshot.EndsAt
 }
 
 let private toSnapshot (state: Session.TimerState) : Backend.TimerSnapshot = {
+  Phase =
+    match state.IsRunning with
+    | true -> Backend.DriveRunning
+    | false -> Backend.Stopped
   RemainingSeconds = state.RemainingSeconds
-  IsRunning = state.IsRunning
   EndsAt = state.EndsAt
-  IsPaused = false
 }
 
 let private saveTimer (client: FirebaseClient) (sessionId: string) (snapshot: Backend.TimerSnapshot) =

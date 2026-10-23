@@ -101,6 +101,8 @@ public abstract class ServerSpec(ServerFixture server) : WolverineHttpSpec(serve
             RotateDriver => CommandRoutes.RotateDriver,
             PauseDrive => CommandRoutes.PauseDrive,
             ResumeDrive => CommandRoutes.ResumeDrive,
+            SkipDrive => CommandRoutes.SkipDrive,
+            SkipBreak => CommandRoutes.SkipBreak,
             _ => throw new ArgumentException($"No route for {command.GetType().Name}."),
         };
 
@@ -110,6 +112,7 @@ public abstract class ServerSpec(ServerFixture server) : WolverineHttpSpec(serve
     public async ValueTask InitializeAsync()
     {
         Fixture.Host.Services.GetRequiredService<NodeErrors>().Clear();
+        Fixture.Clock.Set(ServerFixture.Now);
         await ResetAsync();
     }
 

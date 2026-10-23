@@ -19,6 +19,13 @@ public sealed partial class SessionDriveHistoryProjection : SingleStreamProjecti
     public static SessionDriveHistory Apply(DriveSwitched switched, SessionDriveHistory history) =>
         Add(history, new(DriveHistoryKind.Switched, CurrentDriver(history), switched.User, switched.At));
 
+    // No Participant causes the end of a Drive. The entry names the Driver, as the Firebase backend does.
+    public static SessionDriveHistory Apply(DriveFinished finished, SessionDriveHistory history) =>
+        Add(history, new(DriveHistoryKind.Finished, CurrentDriver(history), CurrentDriver(history), finished.At));
+
+    public static SessionDriveHistory Apply(DriveSkipped skipped, SessionDriveHistory history) =>
+        Add(history, new(DriveHistoryKind.Skipped, CurrentDriver(history), skipped.User, skipped.At));
+
     public static bool ShouldDelete(SessionDeleted _) => true;
 
     private static SessionDriveHistory Add(SessionDriveHistory history, DriveHistoryEntry entry) =>

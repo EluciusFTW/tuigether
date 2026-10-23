@@ -19,5 +19,19 @@ public sealed partial class SessionTimerProjection : SingleStreamProjection<Sess
     public static SessionTimer Apply(DriveResumed resumed, SessionTimer timer) =>
         timer with { Phase = TimerPhase.DriveRunning, EndsAt = resumed.EndsAt, Remaining = resumed.EndsAt - resumed.At };
 
+    public static SessionTimer Apply(DriveFinished _, SessionTimer timer) => Idle(timer);
+
+    public static SessionTimer Apply(DriveSkipped _, SessionTimer timer) => Idle(timer);
+
+    public static SessionTimer Apply(BreakStarted started, SessionTimer timer) =>
+        timer with { Phase = TimerPhase.Break, EndsAt = started.EndsAt, Remaining = started.EndsAt - started.At };
+
+    public static SessionTimer Apply(BreakSkipped _, SessionTimer timer) => Idle(timer);
+
+    public static SessionTimer Apply(BreakEnded _, SessionTimer timer) => Idle(timer);
+
     public static bool ShouldDelete(SessionDeleted _) => true;
+
+    private static SessionTimer Idle(SessionTimer timer) =>
+        timer with { Phase = TimerPhase.Idle, EndsAt = null, Remaining = TimeSpan.Zero };
 }

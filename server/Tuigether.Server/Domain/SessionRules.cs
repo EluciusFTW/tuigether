@@ -13,8 +13,8 @@ public static class SessionRules
             : Result.Ok(session);
 
     /// <summary>
-    /// The time that a running Drive has left at <paramref name="now"/>.
+    /// The time that a running Drive or Break has left at <paramref name="now"/>.
     /// </summary>
-    public static TimeSpan DriveRemaining(DateTimeOffset endsAt, DateTimeOffset now) =>
+    public static TimeSpan TimeLeft(DateTimeOffset endsAt, DateTimeOffset now) =>
         endsAt > now ? endsAt - now : TimeSpan.Zero;
 }

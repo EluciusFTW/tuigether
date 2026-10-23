@@ -14,6 +14,11 @@ public sealed record ServerOptions
     /// within this time keeps the User in the Session.
     /// </summary>
     public TimeSpan LeaveGracePeriod { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// The length of the Break after a finished or skipped Drive.
+    /// </summary>
+    public TimeSpan BreakDuration { get; init; } = TimeSpan.FromMinutes(5);
 }
 
 public static class ServerRoutes

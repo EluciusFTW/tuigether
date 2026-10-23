@@ -71,15 +71,18 @@ public enum TimerPhase
     Idle,
     DriveRunning,
     DrivePaused,
+    Break,
 }
 
 /// <summary>
 /// The timer of one Session.
 /// </summary>
 /// <param name="Driver">A paused Drive can have no Driver.</param>
-/// <param name="EndsAt">The time on the server clock when the running Drive ends. Null when no Drive runs.</param>
-/// <param name="Remaining">The time that the Drive has left: at <see cref="EndsAt"/> minus the time of the start or
-/// the resume while the Drive runs, and the frozen value while it is paused. Zero when the timer is idle.</param>
+/// <param name="EndsAt">The time on the server clock when the running Drive or the Break ends. Null when neither
+/// runs.</param>
+/// <param name="Remaining">The time that the Drive or the Break has left: at <see cref="EndsAt"/> minus the time of
+/// its start or resume while it runs, and the frozen value while the Drive is paused. Zero when the timer is
+/// idle.</param>
 public sealed record SessionTimer(Guid Id, TimerPhase Phase, string? Driver, DateTimeOffset? EndsAt, TimeSpan Remaining);
 
 [JsonConverter(typeof(JsonStringEnumConverter<DriveHistoryKind>))]
@@ -89,6 +92,8 @@ public enum DriveHistoryKind
     Paused,
     Resumed,
     Switched,
+    Finished,
+    Skipped,
 }
 
 /// <param name="Driver">The Driver of the Drive that the entry belongs to.</param>

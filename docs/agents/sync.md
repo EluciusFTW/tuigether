@@ -55,6 +55,8 @@ has clients on different versions, and every record must stay readable in both d
   after its last refresh, and each debounced save refreshes it. So the lock of a crashed client expires.
 - `TimerState.EndsAt` is the absolute instant when a running drive ends. Every client derives the remaining time from
   its own clock and `EndsAt`. `RemainingSeconds` holds the frozen value while the timer is paused or idle.
+- `Backend.TimerSnapshot` is the seam's own timer type. Its `Phase` is `Stopped` from Firebase, because a Firebase
+  timer cannot tell a paused Drive from an idle timer. Only a server sends `Break`.
 
 ## Backend seam
 
@@ -120,7 +122,14 @@ no-op.
   clock. The proposed timer gives only the Drive duration. `RotateDriver` carries the Driver that the Client shows, so
   the server rejects the second of two rotations at the same moment.
 - When the Driver leaves, the server pauses a running Drive and clears the Driver. `Driving.ClearDriver` is a no-op.
-- The timer subscription sends no snapshot for an idle timer, so the timer component keeps its own idle display.
+- `Driving.SkipDrive` and `Driving.SkipBreak` send their Commands. The server ends each Drive and each Break at its
+  `EndsAt`, starts the Break and writes the Drive history. `Driving.EndDrive`, `Driving.RecordFinishedDrive` and
+  `Driving.EndBreak` are no-ops.
+- The timer subscription sends each phase of the server: `Idle`, `DriveRunning`, `DrivePaused` and `Break`. The timer
+  component counts a `Break` down from its `EndsAt`. It leaves the Break when `Idle` or `DriveRunning` arrives. An
+  idle timer ignores `Idle` and keeps its own display.
+- The timer component knows a shared Break by its `EndsAt`. Only during a shared Break does `f` skip the Break, and
+  does a remote Drive start end the Break. The Firebase Break keeps its behaviour.
 - The Driver arrives in `SessionData`. The node sends the Participants before the Session data, because `Journey`
   shows a Driver only when the Driver is in its Participants.
 - The backend keeps the last message of each type. A subscription that starts after a push gets that message at once.

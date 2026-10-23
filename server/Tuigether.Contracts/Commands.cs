@@ -14,6 +14,10 @@ public static class CommandRoutes
     public const string PauseDrive = "/api/sessions/pause-drive";
 
     public const string ResumeDrive = "/api/sessions/resume-drive";
+
+    public const string SkipDrive = "/api/sessions/skip-drive";
+
+    public const string SkipBreak = "/api/sessions/skip-break";
 }
 
 public sealed record CreateSession(string Title, string Repository, string Branch);
@@ -34,3 +38,10 @@ public sealed record RotateDriver(Guid SessionId, string? CurrentDriver, string 
 public sealed record PauseDrive(Guid SessionId);
 
 public sealed record ResumeDrive(Guid SessionId);
+
+/// <summary>
+/// Ends the running Drive before its end and starts the Break.
+/// </summary>
+public sealed record SkipDrive(Guid SessionId);
+
+public sealed record SkipBreak(Guid SessionId);

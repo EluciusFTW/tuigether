@@ -15,9 +15,14 @@ public sealed class ServerFixture : IAsyncLifetime
     public const string ApiKey = "spec-api-key";
 
     /// <summary>
-    /// The server clock in every spec, so that a spec can state the time of an event.
+    /// The server clock at the start of every spec, so that a spec can state the time of an event.
     /// </summary>
     public static readonly DateTimeOffset Now = new(2026, 10, 23, 9, 0, 0, TimeSpan.Zero);
+
+    /// <summary>
+    /// Short enough for a spec to wait for the end of a Break.
+    /// </summary>
+    public static readonly TimeSpan BreakDuration = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// Long enough for a Client to open a Session again within it, short enough for a spec to wait for its end.
@@ -30,6 +35,11 @@ public sealed class ServerFixture : IAsyncLifetime
 
     public IAlbaHost Host => _host ?? throw new InvalidOperationException("The fixture has not started its node.");
 
+    /// <summary>
+    /// The server clock of every node. It stands still until a spec moves it.
+    /// </summary>
+    public SpecClock Clock { get; } = new(Now);
+
     public async ValueTask InitializeAsync()
     {
         await _postgres.StartAsync();
@@ -41,10 +51,10 @@ public sealed class ServerFixture : IAsyncLifetime
     /// </summary>
     public Task<IAlbaHost> StartNodeAsync() =>
         AlbaHost
-            .For<Program>(static builder =>
-                builder.ConfigureServices(static services =>
+            .For<Program>(builder =>
+                builder.ConfigureServices(services =>
                 {
-                    services.AddSingleton<TimeProvider>(new FixedClock(Now));
+                    services.AddSingleton<TimeProvider>(Clock);
                     services.AddSingleton<NodeErrors>();
                     services.AddSingleton<ILoggerProvider>(static provider => provider.GetRequiredService<NodeErrors>());
 
@@ -56,6 +66,7 @@ public sealed class ServerFixture : IAsyncLifetime
             .WithConfiguration("ConnectionStrings:Postgres", _postgres.GetConnectionString())
             .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.ApiKey)}", ApiKey)
             .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.LeaveGracePeriod)}", LeaveGracePeriod.ToString())
+            .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.BreakDuration)}", BreakDuration.ToString())
             .StartAsync();
 
     public async ValueTask DisposeAsync()
@@ -67,9 +78,16 @@ public sealed class ServerFixture : IAsyncLifetime
 
         await _postgres.DisposeAsync();
     }
+}
 
-    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
-    {
-        public override DateTimeOffset GetUtcNow() => now;
-    }
+/// <summary>
+/// Handlers read the clock on other threads. So it holds the UTC ticks, which one write replaces as a whole.
+/// </summary>
+public sealed class SpecClock(DateTimeOffset start) : TimeProvider
+{
+    private long _utcTicks = start.UtcTicks;
+
+    public void Set(DateTimeOffset now) => Interlocked.Exchange(ref _utcTicks, now.UtcTicks);
+
+    public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _utcTicks), TimeSpan.Zero);
 }

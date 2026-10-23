@@ -207,6 +207,7 @@ let private stageHelp (model: Model) =
 let private canFastForward (model: Model) =
   match model.Journey.Timer.State with
   | Timer.Running -> true
+  | Timer.Breaking _ -> Timer.isSharedBreak model.Journey.Timer
   | _ -> false
 
 let private canNext (model: Model) =
@@ -222,7 +223,10 @@ let private journeyKeyToMsg (model: Model) (gMsg: JourneyKeys.Msg) : Msg =
     | Timer.Running -> JourneyMsg(Journey.TimerMsg Timer.Pause)
     | Timer.Paused -> JourneyMsg(Journey.TimerMsg Timer.Resume)
     | _ -> JourneyMsg Journey.SwitchDriver
-  | JourneyKeys.FastForward -> JourneyMsg(Journey.TimerMsg Timer.SkipTimer)
+  | JourneyKeys.FastForward ->
+    match model.Journey.Timer.State with
+    | Timer.Breaking _ -> JourneyMsg(Journey.TimerMsg Timer.SkipPause)
+    | _ -> JourneyMsg(Journey.TimerMsg Timer.SkipTimer)
   | JourneyKeys.NextDrive -> JourneyMsg Journey.SwitchDriver
   | JourneyKeys.ToggleDriveLog -> ToggleDriveLog
 

@@ -26,7 +26,7 @@ public static class CheckParticipantLeftRules
         {
             _ when session.Driver != user => [],
             { Timer: TimerPhase.DriveRunning, DriveEndsAt: { } endsAt } =>
-                [new DrivePaused(session.Id, SessionRules.DriveRemaining(endsAt, now), user, now), new DriverChanged(session.Id, null, user, now)],
+                [new DrivePaused(session.Id, SessionRules.TimeLeft(endsAt, now), user, now), new DriverChanged(session.Id, null, user, now)],
             _ => [new DriverChanged(session.Id, null, user, now)],
         };
 

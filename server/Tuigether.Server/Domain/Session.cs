@@ -29,6 +29,11 @@ public sealed record Session(Guid Id, bool IsDeleted)
     /// </summary>
     public TimeSpan DriveRemaining { get; init; }
 
+    /// <summary>
+    /// When the Break ends. Null when no Break runs.
+    /// </summary>
+    public DateTimeOffset? BreakEndsAt { get; init; }
+
     public static Session Create(SessionCreated created) => new(created.SessionId, IsDeleted: false);
 
     public static Session Apply(SessionDeleted _, Session session) => session with { IsDeleted = true };
@@ -53,4 +58,18 @@ public sealed record Session(Guid Id, bool IsDeleted)
 
     public static Session Apply(DriveResumed resumed, Session session) =>
         session with { Timer = TimerPhase.DriveRunning, DriveEndsAt = resumed.EndsAt };
+
+    public static Session Apply(DriveFinished _, Session session) => Idle(session);
+
+    public static Session Apply(DriveSkipped _, Session session) => Idle(session);
+
+    public static Session Apply(BreakStarted started, Session session) =>
+        Idle(session) with { Timer = TimerPhase.Break, BreakEndsAt = started.EndsAt };
+
+    public static Session Apply(BreakSkipped _, Session session) => Idle(session);
+
+    public static Session Apply(BreakEnded _, Session session) => Idle(session);
+
+    private static Session Idle(Session session) =>
+        session with { Timer = TimerPhase.Idle, DriveEndsAt = null, DriveRemaining = TimeSpan.Zero, BreakEndsAt = null };
 }

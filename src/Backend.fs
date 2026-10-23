@@ -17,15 +17,22 @@ type UserEvent =
   | UserChanged of user: string * presence: Session.UserPresence
   | UserRemoved of user: string
 
-// The seam's own timer type, apart from the wire record `Session.TimerState`, so that it can grow to carry the shared
-// Break.
+type TimerPhase =
+  // A backend that cannot tell a paused Drive from an idle timer sends Stopped.
+  | Stopped
+  | Idle
+  | DriveRunning
+  | DrivePaused
+  // The Break for all Participants. A backend without a shared Break never sends it, and each Client runs its own
+  // Break.
+  | Break
+
+// The seam's own timer type, apart from the wire record `Session.TimerState`.
 type TimerSnapshot = {
+  Phase: TimerPhase
   RemainingSeconds: int
-  IsRunning: bool
-  // Unix ms when the running Drive ends. 0 when no Drive runs.
+  // Unix ms when the running Drive or the Break ends. 0 when neither runs.
   EndsAt: int64
-  // A backend that cannot tell a paused Drive from an idle timer sends false.
-  IsPaused: bool
 }
 
 type ConnectionState =

@@ -370,34 +370,33 @@ let private summaryData (summary: SessionSummary) =
 let private sessionData (data: SessionData) =
   toData data.Title data.Status data.CreatedBy data.Repository data.Branch data.CreatedAt data.Driver
 
-// An idle timer has no state to adopt, so the timer component keeps its own idle display.
 let private timerSnapshot (timer: SessionTimer) : Backend.TimerSnapshot option =
-  match timer.Phase with
-  | TimerPhase.DriveRunning ->
-    Some {
-      RemainingSeconds = int timer.Remaining.TotalSeconds
-      IsRunning = true
-      IsPaused = false
-      EndsAt =
-        timer.EndsAt
-        |> Option.ofNullable
-        |> Option.map _.ToUnixTimeMilliseconds()
-        |> Option.defaultValue 0L
-    }
-  | TimerPhase.DrivePaused ->
-    Some {
-      RemainingSeconds = int timer.Remaining.TotalSeconds
-      IsRunning = false
-      IsPaused = true
-      EndsAt = 0L
-    }
-  | _ -> None
+  let phase =
+    match timer.Phase with
+    | TimerPhase.DriveRunning -> Some Backend.DriveRunning
+    | TimerPhase.DrivePaused -> Some Backend.DrivePaused
+    | TimerPhase.Break -> Some Backend.Break
+    | TimerPhase.Idle -> Some Backend.Idle
+    | _ -> None
+
+  phase
+  |> Option.map (fun phase -> {
+    Phase = phase
+    RemainingSeconds = int timer.Remaining.TotalSeconds
+    EndsAt =
+      timer.EndsAt
+      |> Option.ofNullable
+      |> Option.map _.ToUnixTimeMilliseconds()
+      |> Option.defaultValue 0L
+  })
 
 let private historyType (kind: DriveHistoryKind) =
   match kind with
   | DriveHistoryKind.Paused -> Session.DriveEventType.Paused
   | DriveHistoryKind.Resumed -> Session.DriveEventType.Resumed
   | DriveHistoryKind.Switched -> Session.DriveEventType.Switched
+  | DriveHistoryKind.Finished -> Session.DriveEventType.Finished
+  | DriveHistoryKind.Skipped -> Session.DriveEventType.Skipped
   | DriveHistoryKind.Started
   | _ -> Session.DriveEventType.Started
 
@@ -637,20 +636,22 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
           member _.ResumeDrive sessionId _by _driver _proposed =
             postOnSession sessionId ResumeDrive CommandRoutes.ResumeDrive
 
-          member _.SkipDrive _sessionId _by _driver _proposed =
-            nothing
+          member _.SkipDrive sessionId _by _driver _proposed =
+            postOnSession sessionId SkipDrive CommandRoutes.SkipDrive
 
+          // The server ends the Drive at its `EndsAt`, starts the Break and writes the history.
           member _.EndDrive _sessionId _proposed =
             nothing
 
           member _.RecordFinishedDrive _sessionId _by _driver =
             nothing
 
+          // The server ends the Break at its `EndsAt`.
           member _.EndBreak _sessionId _proposed =
             nothing
 
-          member _.SkipBreak _sessionId _proposed =
-            nothing
+          member _.SkipBreak sessionId _proposed =
+            postOnSession sessionId SkipBreak CommandRoutes.SkipBreak
 
           // The server pauses the Drive and clears the Driver when the Driver leaves.
           member _.ClearDriver _sessionId =

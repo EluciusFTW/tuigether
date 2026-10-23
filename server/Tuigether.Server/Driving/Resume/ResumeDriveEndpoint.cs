@@ -31,9 +31,13 @@ public sealed record ResumeDriveBy(ResumeDrive Command, string User)
 
 public static class ResumeDriveHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
         ResumeDriveBy request,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => ResumeDriveRules.Resume(current, request.User, clock.GetUtcNow()));
+        TimeProvider clock)
+    {
+        var now = clock.GetUtcNow();
+        var (outcome, events, broadcast) = SessionCommand.Decide(session, current => ResumeDriveRules.Resume(current, request.User, now));
+        return (outcome, events, broadcast, DrivingRules.ScheduleEnds(events, now));
+    }
 }

@@ -8,7 +8,7 @@ namespace Tuigether.Server.Driving.Resume;
 public static class ResumeDriveRules
 {
     public static Result<ImmutableArray<object>, string> Resume(Session session, string user, DateTimeOffset now) =>
-        SessionRules.CheckNotDeleted(session).Bind<ImmutableArray<object>>(session => session switch
+        SessionRules.CheckNotDeleted(session).Bind(DrivingRules.CheckNoBreak).Bind<ImmutableArray<object>>(session => session switch
         {
             { Timer: TimerPhase.DrivePaused } =>
                 Result.Ok<ImmutableArray<object>>([new DriveResumed(session.Id, now + session.DriveRemaining, user, now)]),

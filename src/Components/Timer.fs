@@ -31,8 +31,9 @@ type Model = {
   TickEpoch: int
   Backend: Backend.Backend
   SessionId: string
-  // Absolute instant (unix ms) the running Work countdown reaches zero. Drives
-  // the displayed Remaining so all clients agree regardless of tick jitter.
+  // Absolute instant (unix ms) the running Work countdown or the shared Break
+  // reaches zero. Drives the displayed Remaining so all clients agree
+  // regardless of tick jitter. A Break without it counts down locally.
   EndsAt: int64 option
   // Local user, used to attribute auto-finish history to the driver's client only.
   CurrentUser: string
@@ -106,11 +107,19 @@ let private nowMs () =
   Clock.nowMs ()
 
 let toSnapshot (model: Model) : Backend.TimerSnapshot = {
+  Phase =
+    match model.State with
+    | Running -> Backend.DriveRunning
+    | Paused -> Backend.DrivePaused
+    | Breaking _ -> Backend.Break
+    | Idle
+    | Flashing _ -> Backend.Idle
   RemainingSeconds = int model.Remaining.TotalSeconds
-  IsRunning = model.State = Running
   EndsAt = model.EndsAt |> Option.defaultValue 0L
-  IsPaused = model.State = Paused
 }
+
+let private untilMs (endsAt: int64) =
+  TimeSpan.FromMilliseconds(float (max 0L (endsAt - nowMs ())))
 
 let private driveCmd
   (intention: string -> string -> string option -> Backend.TimerSnapshot -> Async<unit>)
@@ -225,17 +234,21 @@ let update (deps: Dependencies) msg model =
     | Flashing _ -> model, Cmd.ofMsg StartBreak
     | _ -> model, []
   | StartBreak ->
+    // A shared Break that arrived during the flash sets EndsAt.
     {
       model with
           State = Breaking 0
           Phase = Break
-          Remaining = breakDuration
+          Remaining = model.EndsAt |> Option.map untilMs |> Option.defaultValue breakDuration
     },
     breakTickCmd
   | BreakTick ->
     match model.State with
     | Breaking frame ->
-      let next = model.Remaining - TimeSpan.FromSeconds 0.5
+      let next =
+        match model.EndsAt with
+        | Some endsAt -> untilMs endsAt
+        | None -> model.Remaining - TimeSpan.FromSeconds 0.5
 
       if next <= TimeSpan.Zero then
         { model with Remaining = TimeSpan.Zero }, Cmd.ofMsg BreakFinished
@@ -301,55 +314,97 @@ let update (deps: Dependencies) msg model =
     // Start/Pause here: those would recompute EndsAt and re-save, pushing the
     // deadline later on every client and echoing writes back and forth. Instead
     // we take the remote EndsAt verbatim and only spin up a local display tick.
-    let remainingFromDeadline () =
-      TimeSpan.FromMilliseconds(float (max 0L (state.EndsAt - nowMs ())))
-
-    match state.IsRunning, model.State with
-    | true, (Idle | Paused) ->
+    let runDrive () =
       let epoch = model.TickEpoch + 1
 
       {
         model with
             State = Running
+            Phase = Work
             EndsAt = Some state.EndsAt
-            Remaining = remainingFromDeadline ()
+            Remaining = untilMs state.EndsAt
             TickEpoch = epoch
       },
       tickCmd epoch
-    | true, Running ->
-      // Already ticking; just re-anchor to the remote deadline in case it moved.
-      {
-        model with
-            EndsAt = Some state.EndsAt
-            Remaining = remainingFromDeadline ()
-      },
-      Cmd.none
-    | false, Running ->
+
+    let pauseDrive () =
       {
         model with
             State = Paused
+            Phase = Work
             EndsAt = None
             Remaining = TimeSpan.FromSeconds(float state.RemainingSeconds)
             TickEpoch = model.TickEpoch + 1
       },
       Cmd.none
-    | false, Idle when state.IsPaused ->
+
+    match state.Phase, model.State with
+    | Backend.DriveRunning, (Idle | Paused) -> runDrive ()
+    | Backend.DriveRunning, Running ->
+      // Already ticking; just re-anchor to the remote deadline in case it moved.
       {
         model with
-            State = Paused
-            EndsAt = None
+            EndsAt = Some state.EndsAt
+            Remaining = untilMs state.EndsAt
+      },
+      Cmd.none
+    // Another Participant started the next Drive during the shared Break. A past EndsAt belongs to the Drive that
+    // just ended.
+    | Backend.DriveRunning, (Flashing _ | Breaking _) when model.EndsAt.IsSome && state.EndsAt > nowMs () -> runDrive ()
+    | (Backend.Stopped | Backend.DrivePaused), Running
+    | Backend.DrivePaused, (Idle | Flashing _ | Breaking _) -> pauseDrive ()
+    | (Backend.Stopped | Backend.DrivePaused), (Idle | Paused) ->
+      {
+        model with
             Remaining = TimeSpan.FromSeconds(float state.RemainingSeconds)
       },
       Cmd.none
-    | false, (Idle | Paused) ->
+    // A snapshot can repeat a Break that this Client already counted down to its end.
+    | Backend.Break, (Idle | Running | Paused) when state.EndsAt > nowMs () ->
+      match model.State with
+      | Running
+      | Paused -> deps.Notify "Drive ended — break started!"
+      | _ -> ()
+
       {
         model with
-            Remaining = TimeSpan.FromSeconds(float state.RemainingSeconds)
+            State = Breaking 0
+            Phase = Break
+            EndsAt = Some state.EndsAt
+            Remaining = untilMs state.EndsAt
+            TickEpoch = model.TickEpoch + 1
+      },
+      breakTickCmd
+    // StartBreak counts the Break from EndsAt when the flash ends.
+    | Backend.Break, (Flashing _ | Breaking _) ->
+      {
+        model with
+            EndsAt = Some state.EndsAt
+      },
+      Cmd.none
+    | Backend.Idle, (Running | Paused | Flashing _ | Breaking _) ->
+      match model.State with
+      | Breaking _ -> deps.Notify "Break over!"
+      | _ -> ()
+
+      {
+        model with
+            State = Idle
+            Phase = Work
+            Remaining = workDuration
+            EndsAt = None
+            TickEpoch = model.TickEpoch + 1
       },
       Cmd.none
     | _ -> model, []
   | RemoteStateLoaded None -> model, []
   | StateSaved -> model, []
+
+// Only a backend with a shared Break sets EndsAt during a Break, see `Backend.Break`.
+let isSharedBreak (model: Model) =
+  match model.State, model.EndsAt with
+  | Breaking _, Some _ -> true
+  | _ -> false
 
 let subscriptions (model: Model) =
   model.Backend.Driving.Subscription model.SessionId |> Subs.map RemoteStateLoaded
