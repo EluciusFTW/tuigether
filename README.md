@@ -17,6 +17,7 @@ This is a very rough sketch of what the app can do currently.
 - System notifications
 - Git integration: session repository and branch, create and switch branches, syncing between the participants
 - Keymap overview (`?`)
+- Break games: Tuisweeper (`t`), Tui48 (`g`), and Tuiboom (`b`), a two-player bomb arena played against someone in the same session
 
 ### Planned features
 - Login / authentication (:D)

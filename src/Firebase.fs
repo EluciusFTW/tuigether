@@ -153,8 +153,7 @@ module Sessions =
 
         let data = sessions |> List.map (fun o -> o.Key, o.Object.ToObject<Session.Data>())
 
-        let connectedUsers =
-          sessions |> List.map (fun o -> o.Key, connectedUsersOf o.Object) |> Map.ofList
+        let connectedUsers = sessions |> List.map (fun o -> o.Key, connectedUsersOf o.Object) |> Map.ofList
 
         return Some(data, connectedUsers)
       with _ ->
@@ -223,6 +222,8 @@ module Sessions =
     async {
       try
         do! (sessionNode client sessionId).DeleteAsync() |> Async.AwaitTask
+        // Tuiboom's data lives outside the session node (see Arena).
+        do! removeValue (client.Child("arena").Child(sessionId))
         return Ok()
       with e ->
         return Error e.Message
@@ -700,3 +701,133 @@ module History =
         subscribeReload (historyPath client sessionId) (fun () -> load client sessionId) (wrap >> dispatch) (fun _ ->
           ())
     ]
+
+// ─── Arena (Tuiboom) ─────────────────────────────────────────────────────────
+//
+// Lives at /arena/{sessionId}, outside /sessions: a running match writes several
+// packets a second, and any change under /sessions makes the session list and the
+// session view reload in full.
+
+module Arena =
+
+  let private arenaNode (client: FirebaseClient) (sessionId: string) =
+    client.Child("arena").Child(sessionId)
+
+  let private matchNode (client: FirebaseClient) (sessionId: string) =
+    (arenaNode client sessionId).Child "match"
+
+  let private packetsNode (client: FirebaseClient) (sessionId: string) (matchId: string) (user: string) =
+    (arenaNode client sessionId).Child("packets").Child(matchId).Child(user)
+
+  // Unlike the widgets' fire-and-forget writes, the game must know when a write
+  // failed: a lost packet is resent, or the opponent would wait for it forever.
+  let private attempt (work: Async<unit>) : Async<Result<unit, string>> =
+    async {
+      try
+        do! work
+        return Ok()
+      with e ->
+        return Error(formatError e)
+    }
+
+  let loadMatch (client: FirebaseClient) (sessionId: string) : Async<Tuiboom.MatchInfo option> =
+    async {
+      try
+        let! result =
+          (matchNode client sessionId).OnceSingleAsync<Tuiboom.MatchInfo>()
+          |> Async.AwaitTask
+
+        return
+          match isNull (box result) with
+          | true -> None
+          | false -> Some result
+      with _ ->
+        return None
+    }
+
+  let saveMatch (client: FirebaseClient) (sessionId: string) (info: Tuiboom.MatchInfo) =
+    attempt ((matchNode client sessionId).PutAsync(box info) |> Async.AwaitTask)
+
+  let private loadPackets (client: FirebaseClient) (sessionId: string) (matchId: string) (user: string) =
+    async {
+      try
+        let! packets =
+          (packetsNode client sessionId matchId user).OnceAsync<Tuiboom.WirePacket>()
+          |> Async.AwaitTask
+
+        return packets |> Seq.map _.Object |> Seq.filter (box >> isNull >> not) |> Seq.toList
+      with _ ->
+        return []
+    }
+
+  // Keyed by the zero-padded sequence number: resending a packet overwrites itself.
+  let private sendPacket
+    (client: FirebaseClient)
+    (sessionId: string)
+    (matchId: string)
+    (user: string)
+    (packet: Tuiboom.WirePacket)
+    =
+    attempt (
+      (packetsNode client sessionId matchId user).Child(sprintf "%08d" packet.Seq).PutAsync(box packet)
+      |> Async.AwaitTask
+    )
+
+  let private subscribePackets
+    (client: FirebaseClient)
+    (sessionId: string)
+    (matchId: string)
+    (user: string)
+    (onPacket: Tuiboom.WirePacket -> unit)
+    : IDisposable =
+    let onNext (ev: FirebaseEvent<Tuiboom.WirePacket>) =
+      match ev.EventType, isNull (box ev.Object) with
+      | FirebaseEventType.InsertOrUpdate, false -> onPacket ev.Object
+      | _ -> ()
+
+    (packetsNode client sessionId matchId user)
+      .AsObservable<Tuiboom.WirePacket>()
+      .Subscribe(Action<FirebaseEvent<Tuiboom.WirePacket>> onNext, Action<exn>(fun _ -> ()))
+
+  /// Forfeits the user's running match, or withdraws their open challenge. Called when
+  /// they leave the session or quit the app.
+  let leave (client: FirebaseClient) (sessionId: string) (user: string) : Async<unit> =
+    async {
+      let! current = loadMatch client sessionId
+
+      match current with
+      | Some info when
+        (info.Status = Tuiboom.MatchStatus.Playing
+         && (info.Host = user || info.Guest = user))
+        || (info.Status = Tuiboom.MatchStatus.Open && info.Host = user)
+        ->
+        let! _ =
+          saveMatch client sessionId {
+            info with
+                Status = Tuiboom.MatchStatus.Abandoned
+                LeftBy = user
+          }
+
+        ()
+      | _ -> ()
+    }
+
+  // Used by the app to notice challenges while the game is closed. The game itself
+  // subscribes through its Transport, under its own key.
+  let matchSubscription (client: FirebaseClient) (sessionId: string) (wrap: Tuiboom.MatchInfo option -> 'appMsg) = [
+    [ "arena-match"; sessionId ],
+    fun dispatch ->
+      subscribeReload (matchNode client sessionId) (fun () -> loadMatch client sessionId) (wrap >> dispatch) ignore
+  ]
+
+  let transport (client: FirebaseClient) (sessionId: string) (user: string) : Tuiboom.Transport = {
+    User = user
+    SaveMatch = saveMatch client sessionId
+    ClearPackets = fun () -> removeValue ((arenaNode client sessionId).Child "packets")
+    SendPacket = sendPacket client sessionId
+    LoadPackets = loadPackets client sessionId
+    SubscribeMatch =
+      fun dispatch ->
+        subscribeReload (matchNode client sessionId) (fun () -> loadMatch client sessionId) dispatch ignore
+    SubscribePackets = subscribePackets client sessionId
+  }

@@ -5,6 +5,7 @@ open Spectre.Tui.App
 open SpectreTuff.Widgets
 open Tuisweeper
 open Tui48
+open Tuiboom
 open Application
 
 type AppView(model: Model) =
@@ -47,8 +48,8 @@ type AppView(model: Model) =
       | KeymapModal.Inline ->
         let helpMaps =
           match model.Page with
-          | SessionViewPage viewModel -> [ SessionView.keyMap viewModel; globalKeyMap ]
-          | _ -> [ globalKeyMap ]
+          | SessionViewPage viewModel -> [ SessionView.keyMap viewModel; globalKeyMap model ]
+          | _ -> [ globalKeyMap model ]
 
         ctx.Render(help helpMaps |> leftAligned, slotPort AppLayout.Help)
       | KeymapModal.Modal ->
@@ -61,6 +62,7 @@ type AppView(model: Model) =
       match model.OpenGame with
       | Some SweeperGame -> ctx.Render(Tuisweeper.view model.Sweeper ignore)
       | Some TileGame -> ctx.Render(Tui48.view model.Tile ignore)
+      | Some ArenaGame -> model.Arena |> Option.iter (fun arena -> ctx.Render(Tuiboom.view arena ignore))
       | None -> ()
 
 let view (model: Model) _dispatch =

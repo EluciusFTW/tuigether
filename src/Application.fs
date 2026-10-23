@@ -12,11 +12,13 @@ open SpectreTuff.Layout
 open SpectreTuff.Widgets
 open Tuisweeper
 open Tui48
+open Tuiboom
 
 /// The games that can be opened on top of the app; at most one at a time.
 type Ingame =
   | SweeperGame
   | TileGame
+  | ArenaGame
 
 type Page =
   | SessionListPage
@@ -33,7 +35,11 @@ type Model = {
   ShowKeymap: bool
   Sweeper: Tuisweeper.Model
   Tile: Tui48.Model
+  /// Only exists inside a session: Tuiboom is played against someone in it.
+  Arena: Tuiboom.Model option
   OpenGame: Ingame option
+  /// The last challenge we notified about, so each one notifies once.
+  NotifiedChallenge: string
   Exiting: bool
 }
 
@@ -47,6 +53,8 @@ type Msg =
   | ToggleGame of Ingame
   | SweeperMsg of Tuisweeper.Msg
   | TileMsg of Tui48.Msg
+  | ArenaMsg of Tuiboom.Msg
+  | ArenaChallenge of MatchInfo option
   | Tick
   | Exit
 
@@ -65,11 +73,18 @@ type Panel = {
 
 // The global keys' behavior and their help-bar documentation are derived from a single
 // binding list, so a key and its description can never drift apart.
-let private globalBindings: Keymap.KeyBinding<unit, Msg> list = [
+let private globalBindings: Keymap.KeyBinding<Model, Msg> list = [
   Keymap.KeyBinding.create 'q' "quit" Exit
   Keymap.KeyBinding.create 'l' "toggle log" ToggleLog
   Keymap.KeyBinding.create 't' "tuisweeper" (ToggleGame SweeperGame)
   Keymap.KeyBinding.create 'g' "tui48" (ToggleGame TileGame)
+  Keymap.KeyBinding.dynamic (Keymap.CharKey 'b') (fun model -> {
+    Description = "tuiboom"
+    Message =
+      match model.Page with
+      | SessionViewPage _ -> Some(ToggleGame ArenaGame)
+      | SessionListPage -> None
+  })
   Keymap.KeyBinding.dynamic (Keymap.CharKey '?') (fun _ -> {
     Description = "keymaps"
     Message =
@@ -79,11 +94,12 @@ let private globalBindings: Keymap.KeyBinding<unit, Msg> list = [
   })
 ]
 
-let private handleGlobalKey (key: ConsoleKeyInfo) : Msg option =
-  Keymap.KeyBinding.handleKey globalBindings key ()
+let private handleGlobalKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
+  Keymap.KeyBinding.handleKey globalBindings key model
 
 // Not private: consumed by the AppView rendering module (help bar) and below.
-let globalKeyMap: IKeyMap = Keymap.KeyBinding.toKeyMap globalBindings ()
+let globalKeyMap (model: Model) : IKeyMap =
+  Keymap.KeyBinding.toKeyMap globalBindings model
 
 let keymapHintMap: IKeyMap = Keymap.KeyBinding.toKeyMap [ Keymap.KeyBinding.create '?' "keymaps" ToggleKeymap ] ()
 
@@ -93,7 +109,7 @@ let keymapSections (model: Model) : (string * IKeyMap) list =
     | SessionListPage -> [ "Sessions", SessionList.keyMap model.SessionList ]
     | SessionViewPage viewModel -> SessionView.keymapSections viewModel
 
-  pageSections @ [ "Global", globalKeyMap ]
+  pageSections @ [ "Global", globalKeyMap model ]
 
 // Not private: buildPanels drives both input routing (here) and rendering (AppView).
 let buildPanels (model: Model) : Panel list =
@@ -149,7 +165,9 @@ let init (client: FirebaseClient) (user: string) () =
     ShowKeymap = false
     Sweeper = sweeperModel
     Tile = tileModel
+    Arena = None
     OpenGame = None
+    NotifiedChallenge = ""
     Exiting = false
   },
   Cmd.batch [
@@ -195,7 +213,19 @@ let private handleSessionViewOutMsg
   : Model * Cmd<Msg> =
   match out with
   | Some(SessionView.LeaveSession(sessionId, user, wasStarted, wasDriver)) ->
-    { model with Page = SessionListPage }, leaveFinalizeCmd client sessionId user wasStarted wasDriver
+    // The match itself is forfeited during leave finalization.
+    let openGame =
+      match model.OpenGame with
+      | Some ArenaGame -> None
+      | other -> other
+
+    {
+      model with
+          Page = SessionListPage
+          Arena = None
+          OpenGame = openGame
+    },
+    leaveFinalizeCmd client sessionId user wasStarted wasDriver
   | None -> model, []
 
 let update (deps: Dependencies) (user: string) msg model =
@@ -211,6 +241,10 @@ let update (deps: Dependencies) (user: string) msg model =
       match key.KeyChar with
       | 'g' -> model, Cmd.ofMsg (ToggleGame TileGame)
       | _ -> model, Cmd.ofMsg (TileMsg(Tui48.InputMsg key))
+    | Some ArenaGame, _ ->
+      match key.KeyChar with
+      | 'b' -> model, Cmd.ofMsg (ToggleGame ArenaGame)
+      | _ -> model, Cmd.ofMsg (ArenaMsg(Tuiboom.InputMsg key))
     | None, true ->
       match key.Key, key.KeyChar with
       | ConsoleKey.Escape, _
@@ -244,7 +278,7 @@ let update (deps: Dependencies) (user: string) msg model =
           |> Option.map (fun msg -> model, Cmd.ofMsg msg)
           |> Option.defaultValue (model, [])
       | false ->
-        match handleGlobalKey key with
+        match handleGlobalKey key model with
         | Some msg -> model, Cmd.ofMsg msg
         | None ->
           focusedPanel
@@ -293,7 +327,20 @@ let update (deps: Dependencies) (user: string) msg model =
       | Some current when current = game -> None
       | _ -> Some game
 
-    { model with OpenGame = openGame }, []
+    // Tuiboom is created on first open in a session and kept while it's hidden, so a
+    // match survives toggling (it pauses meanwhile: no ticks, no packets).
+    match openGame, model.Page, model.Arena with
+    | Some ArenaGame, SessionViewPage viewModel, None ->
+      let arenaModel, arenaCmd = Tuiboom.init (Firebase.Arena.transport deps.Client viewModel.SessionId user)
+
+      {
+        model with
+            OpenGame = openGame
+            Arena = Some arenaModel
+      },
+      Cmd.map ArenaMsg arenaCmd
+    | Some ArenaGame, SessionListPage, _ -> model, []
+    | _ -> { model with OpenGame = openGame }, []
 
   | SweeperMsg sMsg ->
     let sweeperModel, sweeperCmd, outMsg = Tuisweeper.update sweeperDeps sMsg model.Sweeper
@@ -314,6 +361,39 @@ let update (deps: Dependencies) (user: string) msg model =
     | Some Tui48.Closed -> { model with OpenGame = None }, tileCmd
     | None -> model, tileCmd
 
+  | ArenaMsg aMsg ->
+    match model.Arena with
+    | Some arenaModel ->
+      // Keep the cmd along with Closed: it writes a forfeit or a withdrawn challenge.
+      let arenaModel, arenaCmd, outMsg = Tuiboom.update aMsg arenaModel
+      let arenaCmd = Cmd.map ArenaMsg arenaCmd
+
+      match outMsg with
+      | Some Tuiboom.Closed ->
+        {
+          model with
+              Arena = None
+              OpenGame = None
+        },
+        arenaCmd
+      | None -> { model with Arena = Some arenaModel }, arenaCmd
+    | None -> model, []
+
+  | ArenaChallenge(Some info) when
+    info.Status = MatchStatus.Open
+    && info.Host <> user
+    && info.MatchId <> model.NotifiedChallenge
+    ->
+    deps.Notify(sprintf "%s challenges you to Tuiboom (press b)" info.Host)
+    Log.line (sprintf "%s challenges you to Tuiboom (press b)" info.Host)
+
+    {
+      model with
+          NotifiedChallenge = info.MatchId
+    },
+    []
+  | ArenaChallenge _ -> model, []
+
   | Tick -> model, []
 
   | Exit ->
@@ -332,12 +412,26 @@ let subscriptions (model: Model) =
     match model.OpenGame with
     | Some SweeperGame -> Tuisweeper.subscriptions model.Sweeper |> Sub.map "tuisweeper" SweeperMsg
     | Some TileGame -> Tui48.subscriptions model.Tile |> Sub.map "tui48" TileMsg
+    | Some ArenaGame ->
+      model.Arena
+      |> Option.map (Tuiboom.subscriptions >> Sub.map "tuiboom" ArenaMsg)
+      |> Option.defaultValue []
     | None -> []
 
-  pageSubs @ gameSubs
+  // While Tuiboom is closed, watch the session's match to notice challenges.
+  let challengeSubs =
+    match model.Page, model.OpenGame with
+    | SessionViewPage vm, openGame when openGame <> Some ArenaGame ->
+      Firebase.Arena.matchSubscription vm.Client vm.SessionId ArenaChallenge
+    | _ -> []
+
+  pageSubs @ gameSubs @ challengeSubs
 
 let traceToLog msg (model: Model) _ =
   match msg with
   | Tick
-  | SweeperMsg Tuisweeper.Tick -> ()
+  | SweeperMsg Tuisweeper.Tick
+  | ArenaMsg Tuiboom.Tick
+  | ArenaMsg(Tuiboom.PacketReceived _)
+  | ArenaMsg(Tuiboom.PacketSent _) -> ()
   | _ -> Log.append (sprintf "%A" msg) model.LogModel

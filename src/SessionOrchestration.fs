@@ -31,6 +31,9 @@ let leaveAndFinalize
       | false -> ()
     | false -> ()
 
+    // A running Tuiboom match is forfeited; an open challenge is withdrawn.
+    do! Firebase.Arena.leave client sessionId user
+
     let! result = Firebase.Users.leaveAndCheckLast client sessionId user
 
     match result, wasStarted with

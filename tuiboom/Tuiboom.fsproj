@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EluciusFTW.SpectreTuff" Version="0.14.14" />
+    <PackageReference Include="EluciusFTW.SpectreTuff.Elmish" Version="0.14.14" />
+    <PackageReference Update="FSharp.Core" Version="10.1.402" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Game.fs" />
+    <Compile Include="Netcode.fs" />
+    <Compile Include="Match.fs" />
+    <Compile Include="Board.fs" />
+    <Compile Include="Tuiboom.fs" />
+  </ItemGroup>
+
+</Project>
