@@ -4,7 +4,7 @@ using Tuigether.Contracts;
 namespace Tuigether.Server.Sessions;
 
 /// <summary>
-/// The write model of one Session stream. The Command endpoints and the presence handlers decide against it.
+/// The write model of one Session stream. The Command handlers and the presence handlers decide against it.
 /// </summary>
 public sealed record Session(Guid Id, bool IsDeleted)
 {

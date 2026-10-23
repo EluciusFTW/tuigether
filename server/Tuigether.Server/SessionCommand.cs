@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using Tuigether.Contracts;
 using Tuigether.Server.Push;
 using Tuigether.Server.Sessions;
 using Wolverine;
@@ -16,15 +17,16 @@ public abstract record CommandOutcome
 
     public sealed record Accepted : CommandOutcome;
 
+    public sealed record Created(Guid SessionId) : CommandOutcome;
+
     public sealed record Rejected(string Reason) : CommandOutcome;
 
     public sealed record SessionNotFound : CommandOutcome;
 }
 
 /// <summary>
-/// Runs a Command on an existing Session. Wolverine retries a message handler after a concurrency conflict, but not an
-/// HTTP endpoint. So the endpoint invokes a message handler, and the retry decides the Command again against the new
-/// state of the Session.
+/// Runs a Command through its message handler. Wolverine retries a message handler after a concurrency conflict, but not
+/// an HTTP endpoint. The retry decides a Command on an existing Session again against the new state of the Session.
 /// </summary>
 public static class SessionCommand
 {
@@ -32,13 +34,14 @@ public static class SessionCommand
         await bus.InvokeAsync<CommandOutcome>(command, cancellation) switch
         {
             CommandOutcome.Accepted => Results.NoContent(),
+            CommandOutcome.Created { SessionId: var sessionId } => TypedResults.Created(default(string), new CreateSessionResponse(sessionId)),
             CommandOutcome.Rejected { Reason: var reason } => Results.Problem(statusCode: StatusCodes.Status409Conflict, detail: reason),
             CommandOutcome.SessionNotFound => Results.Problem(statusCode: StatusCodes.Status404NotFound, detail: "The Session does not exist."),
             _ => throw new UnreachableException(),
         };
 
     /// <summary>
-    /// Appends the events of an accepted Command and signals the change to every node.
+    /// Appends the events of an accepted Command on an existing Session and signals the change to every node.
     /// </summary>
     public static (CommandOutcome, Events, BroadcastSessionChanged?) Decide(
         Session? session,

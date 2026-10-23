@@ -9,7 +9,7 @@ namespace Tuigether.Server.Push;
 public sealed record SessionChanged(Guid SessionId);
 
 /// <summary>
-/// Sends <see cref="SessionChanged"/> to every node. A Command endpoint returns it after each append. The outbox
+/// Sends <see cref="SessionChanged"/> to every node. A Command handler returns it after each append. The outbox
 /// holds the broadcast until the append commits.
 /// </summary>
 public sealed record BroadcastSessionChanged(Guid SessionId) : ISideEffect

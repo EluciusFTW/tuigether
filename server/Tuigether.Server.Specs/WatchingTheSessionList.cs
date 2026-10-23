@@ -28,10 +28,10 @@ public sealed class WatchingTheSessionList(ServerFixture server) : ServerSpec(se
         var clientOnThisNode = await GivenAClientOnTheSessionList(Fixture.Host);
         var clientOnOtherNode = await GivenAClientOnTheSessionList(otherNode);
 
-        await WhenPosted(new CreateSession("Mob on the timer", "tuigether", "main"), As("ann"));
+        var response = await WhenPosted<CreateSessionResponse>(new CreateSession("Mob on the timer", "tuigether", "main"), As("ann"));
 
         ThenResponseIs(201);
-        var summary = Summary(TheStartedStream<Session>(), "Mob on the timer");
+        var summary = Summary(response.ShouldNotBeNull().SessionId, "Mob on the timer");
         await ThenTheClientGets(clientOnThisNode, summary);
         await ThenTheClientGets(clientOnOtherNode, summary);
     }

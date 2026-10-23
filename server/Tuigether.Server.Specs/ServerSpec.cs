@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Alba;
+using Marten;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Tuigether.Server.Specs;
@@ -72,6 +73,36 @@ public abstract class ServerSpec(ServerFixture server) : WolverineHttpSpec(serve
         var errors = NodeErrorsSoFar();
         SpecAssert.Fact(await arrived(), errors.Count > 0 ? $"{because}. A node logged: {string.Join(" | ", errors)}" : because);
     }
+
+    /// <summary>
+    /// Posts <paramref name="command"/> outside the act of the scenario, for a Given step or for concurrent requests.
+    /// </summary>
+    protected Task<IScenarioResult> PostAsync(object command, string user) =>
+        Fixture.Host.Scenario(scenario =>
+        {
+            As(user)(scenario);
+            scenario.Post.Json(command, JsonStyle.MinimalApi).ToUrl(RouteOf(command));
+            scenario.IgnoreStatusCode();
+        });
+
+    // See "Bobcat and an invoked handler" in docs/agents/csharp.md. Each spec starts on an empty database.
+    [Then("the database holds no events")]
+    internal async Task ThenTheDatabaseHoldsNoEvents()
+    {
+        await using var query = Services.GetRequiredService<IDocumentStore>().QuerySession();
+        SpecAssert.Check("events in the database", await query.Events.QueryAllRawEvents().CountAsync(), 0);
+    }
+
+    private static string RouteOf(object command) =>
+        command switch
+        {
+            CreateSession => CommandRoutes.CreateSession,
+            DeleteSession => CommandRoutes.DeleteSession,
+            RotateDriver => CommandRoutes.RotateDriver,
+            PauseDrive => CommandRoutes.PauseDrive,
+            ResumeDrive => CommandRoutes.ResumeDrive,
+            _ => throw new ArgumentException($"No route for {command.GetType().Name}."),
+        };
 
     private List<string> NodeErrorsSoFar() =>
         _nodes.SelectMany(static node => node.Services.GetRequiredService<NodeErrors>().All).ToList();

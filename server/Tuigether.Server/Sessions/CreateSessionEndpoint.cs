@@ -1,35 +1,37 @@
-using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Push;
+using Wolverine;
 using Wolverine.Http;
 using Wolverine.Marten;
 
 namespace Tuigether.Server.Sessions;
 
+/// <summary>
+/// Invokes <see cref="CreateSessionHandler"/>, see <see cref="SessionCommand"/>.
+/// </summary>
 public static class CreateSessionEndpoint
 {
-    public static ProblemDetails Validate(CreateSession command) =>
-        Problems.FromRule(SessionRules.CheckCreate(command));
-
     [WolverinePost(CommandRoutes.CreateSession)]
-    public static (Created<CreateSessionResponse>, IStartStream, BroadcastSessionChanged) Post(
+    public static Task<IResult> Post(
         CreateSession command,
         [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        TimeProvider clock)
-    {
-        var sessionId = Guid.CreateVersion7();
-        var created = new SessionCreated(
-            sessionId,
-            command.Title,
-            command.Repository,
-            command.Branch,
-            userName,
-            clock.GetUtcNow());
+        IMessageBus bus,
+        CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, new CreateSessionBy(command, userName), cancellation);
+}
 
-        return (
-            TypedResults.Created(default(string), new CreateSessionResponse(sessionId)),
-            MartenOps.StartStream<Session>(sessionId, created),
-            new BroadcastSessionChanged(sessionId));
-    }
+/// <inheritdoc cref="Driving.RotateDriverBy"/>
+public sealed record CreateSessionBy(CreateSession Command, string User);
+
+public static class CreateSessionHandler
+{
+    public static (CommandOutcome, IMartenOp, BroadcastSessionChanged?) Handle(CreateSessionBy request, TimeProvider clock) =>
+        SessionRules.Create(request.Command, Guid.CreateVersion7(), request.User, clock.GetUtcNow())
+            .Match<(CommandOutcome, IMartenOp, BroadcastSessionChanged?)>(
+                static created => (
+                    new CommandOutcome.Created(created.SessionId),
+                    MartenOps.StartStream<Session>(created.SessionId, created),
+                    new BroadcastSessionChanged(created.SessionId)),
+                static reason => (new CommandOutcome.Rejected(reason), MartenOps.Nothing(), null));
 }

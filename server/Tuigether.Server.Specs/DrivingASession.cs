@@ -1,4 +1,3 @@
-using Alba;
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
 using Tuigether.Server.Sessions;
@@ -215,23 +214,6 @@ public sealed class DrivingASession(ServerFixture server) : ServerSpec(server)
         var response = await PostAsync(new RotateDriver(_sessionId, null, driver, Duration), driver);
         response.Context.Response.StatusCode.ShouldBe(204);
     }
-
-    private Task<IScenarioResult> PostAsync(object command, string user) =>
-        Fixture.Host.Scenario(scenario =>
-        {
-            As(user)(scenario);
-            scenario.Post.Json(command, JsonStyle.MinimalApi).ToUrl(RouteOf(command));
-            scenario.IgnoreStatusCode();
-        });
-
-    private static string RouteOf(object command) =>
-        command switch
-        {
-            RotateDriver => CommandRoutes.RotateDriver,
-            PauseDrive => CommandRoutes.PauseDrive,
-            ResumeDrive => CommandRoutes.ResumeDrive,
-            _ => throw new ArgumentException($"No route for {command.GetType().Name}."),
-        };
 
     private async Task<IReadOnlyList<object>> StreamEventsAsync()
     {

@@ -1,28 +1,37 @@
-using JasperFx.Events;
 using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Push;
+using Wolverine;
 using Wolverine.Http;
 using Wolverine.Marten;
-using Wolverine.Persistence;
 
 namespace Tuigether.Server.Sessions;
 
+/// <summary>
+/// Invokes <see cref="DeleteSessionHandler"/>, see <see cref="SessionCommand"/>.
+/// </summary>
 public static class DeleteSessionEndpoint
 {
-    public static ProblemDetails Validate(Session session) =>
-        Problems.FromRule(SessionRules.CheckNotDeleted(session));
-
-    // The Archived event makes Marten archive the stream in the same transaction.
-    // The events stay in the database for statistics.
     [WolverinePost(CommandRoutes.DeleteSession)]
-    [EmptyResponse]
-    public static (Events, BroadcastSessionChanged) Post(
+    public static Task<IResult> Post(
         DeleteSession command,
-        [WriteAggregate(OnMissing = OnMissing.ProblemDetailsWith404)] Session session,
         [FromHeader(Name = RequestHeaders.UserName)] string userName,
+        IMessageBus bus,
+        CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, new DeleteSessionBy(command, userName), cancellation);
+}
+
+/// <inheritdoc cref="Driving.RotateDriverBy"/>
+public sealed record DeleteSessionBy(DeleteSession Command, string User)
+{
+    public Guid SessionId => Command.SessionId;
+}
+
+public static class DeleteSessionHandler
+{
+    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
+        DeleteSessionBy request,
+        [WriteAggregate(Required = false)] Session? session,
         TimeProvider clock) =>
-        (
-            [new SessionDeleted(session.Id, userName, clock.GetUtcNow()), new Archived("Session deleted")],
-            new BroadcastSessionChanged(session.Id));
+        SessionCommand.Decide(session, current => SessionRules.Delete(current, request.User, clock.GetUtcNow()));
 }
