@@ -114,3 +114,9 @@ public sealed record SessionDriveHistory(Guid Id)
 
     public override int GetHashCode() => HashCode.Combine(Id, Entries.Length);
 }
+
+/// <summary>
+/// The Notes of one Session.
+/// </summary>
+/// <param name="EditLockHolder">The Participant who edits the Notes, or null when the Edit lock is free.</param>
+public sealed record SessionNotes(Guid Id, string Text, string? EditLockHolder);

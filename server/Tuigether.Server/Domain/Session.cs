@@ -34,6 +34,13 @@ public sealed record Session(Guid Id, bool IsDeleted)
     /// </summary>
     public DateTimeOffset? BreakEndsAt { get; init; }
 
+    public string NotesText { get; init; } = "";
+
+    /// <summary>
+    /// The Participant who holds the Edit lock of the Notes. Null when the Edit lock is free.
+    /// </summary>
+    public string? NotesEditLockHolder { get; init; }
+
     public static Session Create(SessionCreated created) => new(created.SessionId, IsDeleted: false);
 
     public static Session Apply(SessionDeleted _, Session session) => session with { IsDeleted = true };
@@ -69,6 +76,13 @@ public sealed record Session(Guid Id, bool IsDeleted)
     public static Session Apply(BreakSkipped _, Session session) => Idle(session);
 
     public static Session Apply(BreakEnded _, Session session) => Idle(session);
+
+    public static Session Apply(NotesEditingStarted started, Session session) =>
+        session with { NotesEditLockHolder = started.User };
+
+    public static Session Apply(NotesEdited edited, Session session) => session with { NotesText = edited.Text };
+
+    public static Session Apply(NotesEditingEnded _, Session session) => session with { NotesEditLockHolder = null };
 
     private static Session Idle(Session session) =>
         session with { Timer = TimerPhase.Idle, DriveEndsAt = null, DriveRemaining = TimeSpan.Zero, BreakEndsAt = null };

@@ -65,3 +65,14 @@ public sealed record BreakSkipped(Guid SessionId, string User, DateTimeOffset At
 /// </summary>
 /// <param name="At">The end of the Break. The server appends the event up to one polling interval later.</param>
 public sealed record BreakEnded(Guid SessionId, DateTimeOffset At);
+
+/// <param name="User">The Participant who holds the Edit lock of the Notes from now on.</param>
+public sealed record NotesEditingStarted(Guid SessionId, string User, DateTimeOffset At);
+
+/// <param name="Text">The whole new Notes text.</param>
+public sealed record NotesEdited(Guid SessionId, string Text, string User, DateTimeOffset At);
+
+/// <summary>
+/// The Edit lock of the Notes is free. The holder ended the edit, or the holder left the Session.
+/// </summary>
+public sealed record NotesEditingEnded(Guid SessionId, string User, DateTimeOffset At);

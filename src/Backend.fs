@@ -104,7 +104,10 @@ type IDriveHistory =
 
 // The Edit lock of one text. The Client proposes the lock with its own clock; `Locking` holds the time limit.
 type IEditing =
-  abstract AcquireEditLock: sessionId: string -> lock: Locking.Lock -> Async<unit>
+  // Ok accepts the proposed lock. `current` is the lock that the Client shows. A backend that checks the Edit lock
+  // itself ignores it.
+  abstract AcquireEditLock:
+    sessionId: string -> lock: Locking.Lock -> current: Locking.Lock option -> Async<Result<unit, string>>
   // Live typing: the debounced save while the editor is open. It also writes the refreshed lock.
   abstract SaveDraft: sessionId: string -> text: string -> lock: Locking.Lock option -> Async<unit>
   // Saves the final text and releases the Edit lock.

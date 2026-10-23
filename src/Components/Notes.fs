@@ -18,6 +18,8 @@ type Model = {
   FreetextSaveToken: int
   InsertActivityToken: int
   Lock: Locking.Lock option
+  // An acquire of the Edit lock is on its way. Insert mode starts when the backend accepts it.
+  AwaitingEditLock: bool
   User: string
   Backend: Backend.Backend
   SessionId: string
@@ -29,6 +31,7 @@ type Model = {
 
 type Msg =
   | EnterInsert
+  | EditLockAnswered of proposed: Locking.Lock * Result<unit, string>
   | ExitInsert
   | Edit of TextEditing.EditAction
   | MaybeSaveFreetext of int
@@ -78,6 +81,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     match key.Key with
     | ConsoleKey.Escape -> Some ExitInsert
     | _ -> TextEditing.keyToAction true key |> Option.map Edit
+  | Normal when model.AwaitingEditLock -> None
   | Normal ->
     match key.KeyChar with
     | 'i' -> Some EnterInsert
@@ -91,7 +95,7 @@ let handlePaste (text: string) (model: Model) : Msg option =
 let capturesInput (model: Model) =
   match model.InputMode with
   | Insert -> true
-  | Normal -> false
+  | Normal -> model.AwaitingEditLock
 
 let keyMap (model: Model) =
   let bindings =
@@ -107,6 +111,7 @@ let init (backend: Backend.Backend) (sessionId: string) (user: string) = {
   FreetextSaveToken = 0
   InsertActivityToken = 0
   Lock = None
+  AwaitingEditLock = false
   User = user
   Backend = backend
   SessionId = sessionId
@@ -132,8 +137,10 @@ let private scheduleFreetextSave (token: int) : Cmd<Msg> =
 let private scheduleAutoExit (token: int) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> async { do! Async.Sleep autoExitInsertMs }) () (fun () -> MaybeAutoExitInsert token)
 
+// The server backend shows its rejection. A Firebase rejection stays silent: the key hint shows the holder.
 let private acquireLockCmd (model: Model) (lock: Locking.Lock) : Cmd<Msg> =
-  Cmd.OfAsync.perform (fun () -> model.Backend.Notes.AcquireEditLock model.SessionId lock) () (fun () -> StateSaved)
+  Cmd.OfAsync.perform (fun () -> model.Backend.Notes.AcquireEditLock model.SessionId lock model.Lock) () (fun answer ->
+    EditLockAnswered(lock, answer))
 
 let private endEditCmd (model: Model) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> model.Backend.Notes.EndEdit model.SessionId model.FreetextContent) () (fun () ->
@@ -142,15 +149,22 @@ let private endEditCmd (model: Model) : Cmd<Msg> =
 let update msg model =
   match msg with
   | EnterInsert ->
-    match isLockedByOther model with
-    | true -> model, []
-    | false ->
-      let activityToken = model.InsertActivityToken + 1
-
+    match model.AwaitingEditLock, model.InputMode with
+    | true, _
+    | _, Insert -> model, []
+    | false, Normal ->
       let lock = {
         Owner = model.User
         LockedAt = Clock.nowMs ()
       }
+
+      { model with AwaitingEditLock = true }, acquireLockCmd model lock
+  | EditLockAnswered(_, Error _) -> { model with AwaitingEditLock = false }, []
+  | EditLockAnswered(lock, Ok()) ->
+    match model.InputMode with
+    | Insert -> { model with AwaitingEditLock = false }, []
+    | Normal ->
+      let activityToken = model.InsertActivityToken + 1
 
       // Build the live editor from the current content and place the caret at
       // the end (matching the previous behaviour). It owns the caret from here.
@@ -158,15 +172,15 @@ let update msg model =
 
       editor.MoveToEnd()
 
-      let updated = {
+      {
         model with
             InputMode = Insert
+            AwaitingEditLock = false
             InsertActivityToken = activityToken
             Lock = Some lock
             Editor = Some editor
-      }
-
-      updated, Cmd.batch [ acquireLockCmd updated lock; scheduleAutoExit activityToken ]
+      },
+      scheduleAutoExit activityToken
   | ExitInsert ->
     // Bump the token so any in-flight debounced save is cancelled, then flush
     // the current content immediately so other users see the final edit.

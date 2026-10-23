@@ -18,6 +18,10 @@ public static class CommandRoutes
     public const string SkipDrive = "/api/sessions/skip-drive";
 
     public const string SkipBreak = "/api/sessions/skip-break";
+
+    public const string AcquireNotesEditLock = "/api/sessions/acquire-notes-edit-lock";
+
+    public const string EndNotesEditing = "/api/sessions/end-notes-editing";
 }
 
 public sealed record CreateSession(string Title, string Repository, string Branch);
@@ -45,3 +49,13 @@ public sealed record ResumeDrive(Guid SessionId);
 public sealed record SkipDrive(Guid SessionId);
 
 public sealed record SkipBreak(Guid SessionId);
+
+/// <summary>
+/// Gives the caller the Edit lock of the Notes. Only the holder of the Edit lock edits the Notes.
+/// </summary>
+public sealed record AcquireNotesEditLock(Guid SessionId);
+
+/// <summary>
+/// Stores the Notes text of the Edit lock holder and releases the Edit lock.
+/// </summary>
+public sealed record EndNotesEditing(Guid SessionId, string Text);

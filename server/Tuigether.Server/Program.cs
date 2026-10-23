@@ -2,6 +2,7 @@ using JasperFx;
 using Marten;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Driving;
+using Tuigether.Server.Notes;
 using Tuigether.Server.Presence;
 using Tuigether.Server.Sessions;
 using Tuigether.Server.Shared;
@@ -69,7 +70,8 @@ builder.Services
     .AddDomain()
     .AddSessions()
     .AddPresence()
-    .AddDriving();
+    .AddDriving()
+    .AddNotes();
 
 builder.Services.AddWolverineHttp();
 

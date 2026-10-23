@@ -12,7 +12,8 @@ public sealed record SessionSnapshots(
     SessionParticipants? Participants,
     SessionData? Data,
     SessionTimer? Timer,
-    SessionDriveHistory? DriveHistory)
+    SessionDriveHistory? DriveHistory,
+    SessionNotes? Notes)
 {
     public static async Task<SessionSnapshots> LoadAsync(IQuerySession query, Guid sessionId, CancellationToken cancellation)
     {
@@ -21,8 +22,9 @@ public sealed record SessionSnapshots(
         var data = batch.Load<SessionData>(sessionId);
         var timer = batch.Load<SessionTimer>(sessionId);
         var driveHistory = batch.Load<SessionDriveHistory>(sessionId);
+        var notes = batch.Load<SessionNotes>(sessionId);
         await batch.Execute(cancellation);
-        return new(await participants, await data, await timer, await driveHistory);
+        return new(await participants, await data, await timer, await driveHistory, await notes);
     }
 
     /// <summary>
@@ -36,6 +38,7 @@ public sealed record SessionSnapshots(
             Data is null ? null : new SignalRMessage<SessionData>(Data, clients),
             Timer is null ? null : new SignalRMessage<SessionTimer>(Timer, clients),
             DriveHistory is null ? null : new SignalRMessage<SessionDriveHistory>(DriveHistory, clients),
+            Notes is null ? null : new SignalRMessage<SessionNotes>(Notes, clients),
         }.OfType<object>().ToList();
 }
 

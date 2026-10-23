@@ -27,6 +27,17 @@ let private appendHistoryFor
   | Some d -> appendHistory client sessionId eventType d by
   | None -> async { return () }
 
+// Firebase has no check of its own, so the Client checks the lock that it shows. Insert mode starts before the write
+// completes, so no typed key waits for the database.
+let private acquireEditLock (lock: Locking.Lock) (current: Locking.Lock option) (save: Async<unit>) =
+  async {
+    match Locking.heldByOther (Clock.nowMs ()) lock.Owner current with
+    | true -> return Error "Another User edits the text."
+    | false ->
+      Async.Start save
+      return Ok()
+  }
+
 let private toTimerState (snapshot: Backend.TimerSnapshot) : Session.TimerState = {
   RemainingSeconds = snapshot.RemainingSeconds
   IsRunning = snapshot.Phase = Backend.DriveRunning
@@ -188,8 +199,8 @@ let create (config: Firebase.Config) : Backend.Backend =
           member _.Subscription sessionId =
             Firebase.Notes.subscription client sessionId id
 
-          member _.AcquireEditLock sessionId lock =
-            Firebase.Notes.saveLock client sessionId lock.Owner lock.LockedAt
+          member _.AcquireEditLock sessionId lock current =
+            acquireEditLock lock current (Firebase.Notes.saveLock client sessionId lock.Owner lock.LockedAt)
 
           member _.SaveDraft sessionId text lock =
             async {
@@ -208,8 +219,8 @@ let create (config: Firebase.Config) : Backend.Backend =
       }
     Goal =
       { new Backend.IGoal with
-          member _.AcquireEditLock sessionId lock =
-            Firebase.Sessions.saveGoalLock client sessionId lock.Owner lock.LockedAt
+          member _.AcquireEditLock sessionId lock current =
+            acquireEditLock lock current (Firebase.Sessions.saveGoalLock client sessionId lock.Owner lock.LockedAt)
 
           member _.SaveDraft sessionId text lock =
             async {

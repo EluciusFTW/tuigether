@@ -93,8 +93,9 @@ expires by the time limit in `Locking.fs`.
 
 ### Edit lock and live typing
 
-`Notes` and `Goal` share `IEditing`. `AcquireEditLock` sends the proposed lock when Insert mode starts. `SaveDraft`
-is the debounced save while the User types, and it refreshes the lock. `EndEdit` sends the final text when Insert mode
+`Notes` and `Goal` share `IEditing`. `AcquireEditLock` sends the proposed lock and the lock that the Client shows.
+`Notes` starts Insert mode when it answers `Ok`. The Firebase backend checks the shown lock with `Locking`, and it answers
+before the lock write completes. `SaveDraft` is the debounced save while the User types, and it refreshes the lock. `EndEdit` sends the final text when Insert mode
 ends, by Esc or by the idle auto-exit, and it releases the lock. A backend without live typing makes `SaveDraft` a
 no-op.
 
@@ -133,4 +134,9 @@ no-op.
 - The Driver arrives in `SessionData`. The node sends the Participants before the Session data, because `Journey`
   shows a Driver only when the Driver is in its Participants.
 - The backend keeps the last message of each type. A subscription that starts after a push gets that message at once.
+- `Notes.AcquireEditLock` sends `AcquireNotesEditLock`. The server gives the Edit lock to one Participant at a time,
+  and it rejects the acquire of every other Participant. `Notes.EndEdit` sends `EndNotesEditing` with the text.
+  `Notes.SaveDraft` is a no-op, so the others see the text when the edit ends (ADR 0004). The server releases the Edit
+  lock when its holder leaves. The lock has no time limit, so the backend gives it `LockedAt = Int64.MaxValue` for
+  `Locking`.
 - An area that the server does not serve yet is a stub: its subscription sends nothing, and its intentions do nothing.

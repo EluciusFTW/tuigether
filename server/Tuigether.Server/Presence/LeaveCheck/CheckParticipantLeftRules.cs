@@ -15,7 +15,13 @@ public static class CheckParticipantLeftRules
         {
             { IsDeleted: true } => [],
             _ when hasOpenClient || !session.Participants.Contains(user) => [],
-            _ => [new ParticipantLeft(session.Id, user, now), .. LeaveDrive(session, user, now), .. Finish(session, user, now)],
+            _ =>
+                [
+                    new ParticipantLeft(session.Id, user, now),
+                    .. LeaveDrive(session, user, now),
+                    .. LeaveNotes(session, user, now),
+                    .. Finish(session, user, now),
+                ],
         };
 
     /// <summary>
@@ -29,6 +35,12 @@ public static class CheckParticipantLeftRules
                 [new DrivePaused(session.Id, SessionRules.TimeLeft(endsAt, now), user, now), new DriverChanged(session.Id, null, user, now)],
             _ => [new DriverChanged(session.Id, null, user, now)],
         };
+
+    /// <summary>
+    /// The Edit lock has no time limit, so the leave of its holder is the only release without an end of the edit.
+    /// </summary>
+    private static ImmutableArray<object> LeaveNotes(Session session, string user, DateTimeOffset now) =>
+        session.NotesEditLockHolder == user ? [new NotesEditingEnded(session.Id, user, now)] : [];
 
     private static ImmutableArray<object> Finish(Session session, string user, DateTimeOffset now) =>
         session is { Status: SessionStatus.Started, Participants.Length: 1 } ? [new SessionFinished(session.Id, user, now)] : [];

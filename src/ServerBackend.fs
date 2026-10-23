@@ -390,6 +390,16 @@ let private timerSnapshot (timer: SessionTimer) : Backend.TimerSnapshot option =
       |> Option.defaultValue 0L
   })
 
+// The server lock has no time limit, so the lock never expires in `Locking`.
+let private notesState (notes: SessionNotes) : Session.NotesState = {
+  FreetextContent = notes.Text
+  LockOwner = notes.EditLockHolder
+  LockedAt =
+    match isNull notes.EditLockHolder with
+    | true -> 0L
+    | false -> Int64.MaxValue
+}
+
 let private historyType (kind: DriveHistoryKind) =
   match kind with
   | DriveHistoryKind.Paused -> Session.DriveEventType.Paused
@@ -513,12 +523,16 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
     post http notify route command read
 
   // A Command on a Session whose id the server did not create is a bug of the caller, so it only goes to the log.
-  let postOnSession (sessionId: string) (command: Guid -> 'command) (route: string) =
+  let tryPostOnSession (sessionId: string) (command: Guid -> 'command) (route: string) =
     match Guid.TryParse sessionId with
-    | true, id -> post route (command id) (fun _ -> nothing) |> Async.Ignore
+    | true, id -> post route (command id) (fun _ -> nothing)
     | false, _ ->
-      Log.line (sprintf "%s is not a Session id of the server." sessionId)
-      nothing
+      let reason = sprintf "%s is not a Session id of the server." sessionId
+      Log.line reason
+      async { return Error reason }
+
+  let postOnSession (sessionId: string) (command: Guid -> 'command) (route: string) =
+    tryPostOnSession sessionId command route |> Async.Ignore
 
   // The Session that this Client has open, with the avatar of the User. A new connection opens it again.
   let openSession = ref None
@@ -666,21 +680,26 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
       }
     Notes =
       { new Backend.INotes with
-          member _.Subscription _sessionId = []
+          member _.Subscription sessionId = [
+            [ "server-notes"; sessionId ],
+            fun dispatch -> onSnapshotOf<SessionNotes> hub sessionId _.Id (notesState >> Some >> dispatch)
+          ]
 
-          member _.AcquireEditLock _sessionId _lock =
-            nothing
+          // The server checks the Edit lock and takes the user from the request headers.
+          member _.AcquireEditLock sessionId _lock _current =
+            tryPostOnSession sessionId AcquireNotesEditLock CommandRoutes.AcquireNotesEditLock
 
+          // The others see the text when the edit ends (ADR 0004).
           member _.SaveDraft _sessionId _text _lock =
             nothing
 
-          member _.EndEdit _sessionId _text =
-            nothing
+          member _.EndEdit sessionId text =
+            postOnSession sessionId (fun id -> EndNotesEditing(id, text)) CommandRoutes.EndNotesEditing
       }
     Goal =
       { new Backend.IGoal with
-          member _.AcquireEditLock _sessionId _lock =
-            nothing
+          member _.AcquireEditLock _sessionId _lock _current =
+            async { return Ok() }
 
           member _.SaveDraft _sessionId _text _lock =
             nothing

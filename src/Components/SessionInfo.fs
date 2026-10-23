@@ -420,8 +420,9 @@ let private scheduleGoalSave (token: int) : Cmd<Msg> =
 let private scheduleAutoExit (token: int) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> async { do! Async.Sleep autoExitInsertMs }) () (fun () -> MaybeAutoExitInsert token)
 
+// The callers check the lock before they propose one.
 let private acquireGoalLockCmd (model: Model) (lock: Locking.Lock) : Cmd<Msg> =
-  Cmd.OfAsync.perform (fun () -> model.Backend.Goal.AcquireEditLock model.SessionId lock) () (fun () -> StateSaved)
+  Cmd.OfAsync.perform (fun () -> model.Backend.Goal.AcquireEditLock model.SessionId lock None) () (fun _ -> StateSaved)
 
 let private endGoalEditCmd (model: Model) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> model.Backend.Goal.EndEdit model.SessionId model.GoalContent) () (fun () -> StateSaved)
