@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <WolverineVersion>6.51.3</WolverineVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Marten" Version="9.51.0" />
+    <PackageReference Include="WolverineFx" Version="$(WolverineVersion)" />
+    <PackageReference Include="WolverineFx.Http" Version="$(WolverineVersion)" />
+    <PackageReference Include="WolverineFx.Marten" Version="$(WolverineVersion)" />
+    <PackageReference Include="WolverineFx.PostgreSQL" Version="$(WolverineVersion)" />
+    <!-- Wolverine 6 compiles its handler code at run time only with this package. -->
+    <PackageReference Include="WolverineFx.RuntimeCompilation" Version="$(WolverineVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Tuigether.Contracts/Tuigether.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

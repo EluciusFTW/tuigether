@@ -27,8 +27,8 @@ Run every command from the repository root.
 - Before you report work complete: build, then run `dotnet fantomas <file> ...` on each `.fs` file you changed (after
   `dotnet tool restore` on a fresh clone). Some files on `main` are not formatted, so `dotnet fantomas src` puts
   their changes into your diff.
-- There are no automated tests. A green build proves the types, not the behaviour. Report a behaviour change as
-  "builds, not run", and name the keys a human presses to check it.
+- The F# client has no automated tests. A green build proves the types, not the behaviour. Report a behaviour change
+  as "builds, not run", and name the keys a human presses to check it.
 - Server, after each change: `dotnet build Tuigether.slnx`. It builds the F# client too. Keep it at 0 warnings.
 - Server, before you report work complete: `dotnet test --project server/Tuigether.Server.Specs`. It needs Docker,
   because Testcontainers starts PostgreSQL. Then `dotnet format server/<project> --include <file> ...` on each `.cs`

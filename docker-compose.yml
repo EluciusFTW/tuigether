@@ -1,0 +1,39 @@
+# PostgreSQL and two tuigether server nodes on one database.
+# Start:  docker compose up --build
+# Reset:  docker compose down   (the database has no named volume, so the next start is empty)
+
+name: tuigether
+
+x-node: &node
+  build:
+    context: .
+    dockerfile: server/Tuigether.Server/Dockerfile
+  environment:
+    ConnectionStrings__Postgres: Host=postgres;Database=tuigether;Username=tuigether;Password=tuigether
+    Tuigether__ApiKey: ${TUIGETHER_API_KEY:-dev-api-key}
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: tuigether
+      POSTGRES_USER: tuigether
+      POSTGRES_PASSWORD: tuigether
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=tuigether --dbname=tuigether"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  node-a:
+    <<: *node
+    ports:
+      - "5101:8080"
+
+  node-b:
+    <<: *node
+    ports:
+      - "5102:8080"
