@@ -2,7 +2,6 @@ module TodoList
 
 open System
 open Elmish
-open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open SpectreTuff.Keymap
@@ -30,7 +29,8 @@ type Model = {
   InputMode: InputMode
   Items: TodoItem list
   SelectedIndex: int
-  Persistence: Firebase.Persistence
+  Backend: Backend.Backend
+  SessionId: string
 }
 
 type Msg =
@@ -119,40 +119,42 @@ let keyMap (model: Model) =
 
   KeyBinding.toKeyMap bindings model
 
-let init (client: FirebaseClient) (sessionId: string) = {
+let init (backend: Backend.Backend) (sessionId: string) = {
   InputMode = Normal
   Items = []
   SelectedIndex = 0
-  Persistence = {
-    Client = client
-    SessionId = sessionId
-  }
+  Backend = backend
+  SessionId = sessionId
+}
+
+let private toItemState (item: TodoItem) : Session.TodoItemState = {
+  Text = item.Text
+  Completed = item.Completed
 }
 
 let private addItemCmd (model: Model) (item: TodoItem) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> Firebase.Todo.addItem model.Persistence.Client model.Persistence.SessionId item.Id item.Text)
-    ()
-    (fun () -> StateSaved)
+  Cmd.OfAsync.perform (fun () -> model.Backend.Todo.Add model.SessionId item.Id item.Text) () (fun () -> StateSaved)
 
 let private setCompletedCmd (model: Model) (itemId: string) (completed: bool) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> Firebase.Todo.setCompleted model.Persistence.Client model.Persistence.SessionId itemId completed)
-    ()
-    (fun () -> StateSaved)
+  let setCompleted =
+    match completed with
+    | true -> model.Backend.Todo.Complete
+    | false -> model.Backend.Todo.Reopen
+
+  Cmd.OfAsync.perform (fun () -> setCompleted model.SessionId itemId) () (fun () -> StateSaved)
 
 let private deleteItemCmd (model: Model) (itemId: string) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> Firebase.Todo.deleteItem model.Persistence.Client model.Persistence.SessionId itemId)
-    ()
-    (fun () -> StateSaved)
+  Cmd.OfAsync.perform (fun () -> model.Backend.Todo.Remove model.SessionId itemId) () (fun () -> StateSaved)
 
-let private setItemCmd (model: Model) (item: TodoItem) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () ->
-      Firebase.Todo.setItem model.Persistence.Client model.Persistence.SessionId item.Id item.Text item.Completed)
-    ()
-    (fun () -> StateSaved)
+let private changeTextCmd (model: Model) (item: TodoItem) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Todo.ChangeText model.SessionId item.Id (toItemState item)) () (fun () ->
+    StateSaved)
+
+let private moveCmd (model: Model) (moved: TodoItem) (newPosition: int) (newTop: TodoItem) (newBottom: TodoItem) =
+  let swapped = (newTop.Id, toItemState newTop), (newBottom.Id, toItemState newBottom)
+
+  Cmd.OfAsync.perform (fun () -> model.Backend.Todo.Move model.SessionId moved.Id newPosition swapped) () (fun () ->
+    StateSaved)
 
 // Display order is the push-ID key order, so reordering swaps the two adjacent
 // items' content between their fixed key slots — the keys (and thus the sort
@@ -251,7 +253,7 @@ let update msg model =
 
       // Push IDs are chronologically sortable, so new items always append.
       let newItem = {
-        Id = Firebase.PushId.generate ()
+        Id = PushId.generate ()
         Text = newText
         Completed = false
       }
@@ -291,7 +293,7 @@ let update msg model =
 
         // The item can vanish mid-edit if another user deletes it; skip the write.
         match newItems |> List.tryFind (fun it -> it.Id = id) with
-        | Some edited -> updated, setItemCmd updated edited
+        | Some edited -> updated, changeTextCmd updated edited
         | None -> updated, []
     | _ -> model, []
   | Toggle ->
@@ -343,7 +345,7 @@ let update msg model =
             SelectedIndex = i - 1
       }
 
-      updated, Cmd.batch [ setItemCmd updated newTop; setItemCmd updated newBottom ]
+      updated, moveCmd updated model.Items.[i] (i - 1) newTop newBottom
     | _ -> model, []
   | MoveDown ->
     match model.SelectedIndex with
@@ -356,7 +358,7 @@ let update msg model =
             SelectedIndex = i + 1
       }
 
-      updated, Cmd.batch [ setItemCmd updated newTop; setItemCmd updated newBottom ]
+      updated, moveCmd updated model.Items.[i] (i + 1) newTop newBottom
     | _ -> model, []
   | RemoteStateLoaded(Some state) ->
     let items =
@@ -387,7 +389,7 @@ let update msg model =
   | StateSaved -> model, []
 
 let subscriptions (model: Model) =
-  Firebase.Todo.subscription model.Persistence.Client model.Persistence.SessionId RemoteStateLoaded
+  model.Backend.Todo.Subscription model.SessionId |> Subs.map RemoteStateLoaded
 
 // Completed items render grey, still-to-do items green. The selected row inverts
 // to black-on-(state colour) — legible and calm, instead of the default list

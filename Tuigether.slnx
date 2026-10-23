@@ -1,0 +1,25 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".dockerignore" />
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="docker-compose.yml" />
+    <File Path="dotnet-tools.json" />
+    <File Path="global.json" />
+    <File Path="LICENSE.md" />
+    <File Path="README.md" />
+  </Folder>
+  <Folder Name="/scripts/">
+    <File Path="scripts/install.ps1" />
+    <File Path="scripts/install.sh" />
+  </Folder>
+  <Folder Name="/server/">
+    <Project Path="server/Tuigether.Contracts/Tuigether.Contracts.csproj" />
+    <Project Path="server/Tuigether.Server/Tuigether.Server.csproj" />
+    <Project Path="server/Tuigether.Server.Specs/Tuigether.Server.Specs.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Tuigether.fsproj" />
+  </Folder>
+</Solution>

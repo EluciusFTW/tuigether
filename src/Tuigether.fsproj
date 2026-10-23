@@ -11,11 +11,17 @@
     <PackageReference Include="EluciusFTW.Tui48" Version="0.1.3" />
     <PackageReference Include="EluciusFTW.Tuisweeper" Version="0.1.1" />
     <PackageReference Include="FirebaseDatabase.net" Version="5.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.13" />
     <PackageReference Update="FSharp.Core" Version="10.1.402" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../server/Tuigether.Contracts/Tuigether.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="Clock.fs" />
+    <Compile Include="PushId.fs" />
     <Compile Include="Str.fs" />
     <Compile Include="Clipboard.fs" />
     <Compile Include="Locking.fs" />
@@ -24,10 +30,13 @@
     <Compile Include="Git.fs" />
     <Compile Include="Session.fs" />
     <Compile Include="JourneyKeys.fs" />
+    <Compile Include="Backend.fs" />
     <Compile Include="Firebase.fs" />
+    <Compile Include="FirebaseBackend.fs" />
+    <Compile Include="Components/Log.fs" />
+    <Compile Include="ServerBackend.fs" />
     <Compile Include="Dependencies.fs" />
     <Compile Include="Components/TextEditing.fs" />
-    <Compile Include="Components/Log.fs" />
     <Compile Include="Components/KeymapModal.fs" />
     <Compile Include="Components/Notes.fs" />
     <Compile Include="Components/NoteList.fs" />
@@ -40,7 +49,6 @@
     <Compile Include="Components/SessionList.fs" />
     <Compile Include="Components/DriveLog.fs" />
     <Compile Include="Components/SessionView.fs" />
-    <Compile Include="SessionOrchestration.fs" />
     <Compile Include="AppLayout.fs" />
     <Compile Include="Application.fs" />
     <Compile Include="AppView.fs" />

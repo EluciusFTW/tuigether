@@ -3,7 +3,6 @@ module SessionView
 open System
 open Dependencies
 open Elmish
-open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open Spectre.Tui.App
@@ -13,7 +12,7 @@ open SpectreTuff.Layout
 open SpectreTuff.Widgets
 
 type Model = {
-  Client: FirebaseClient
+  Backend: Backend.Backend
   SessionId: string
   SessionData: Session.Data
   User: string
@@ -45,25 +44,26 @@ type Msg =
 
 type OutMsg = LeaveSession of sessionId: string * user: string * wasStarted: bool * wasDriver: bool
 
-let init (client: FirebaseClient) (user: string) (avatarName: string) (sessionId: string) (sessionData: Session.Data) =
+let init (deps: Dependencies) (user: string) (avatarName: string) (sessionId: string) (sessionData: Session.Data) =
   let model = {
-    Client = client
+    Backend = deps.Backend
     SessionId = sessionId
     SessionData = sessionData
     User = user
     AvatarName = avatarName
     Status = "joining…"
     Focus = 1
-    Notes = Notes.init client sessionId user
-    NoteList = NoteList.init client sessionId
-    TodoList = TodoList.init client sessionId
-    SessionInfo = SessionInfo.init client sessionId user sessionData
-    Journey = Journey.init client sessionId user avatarName sessionData
-    DriveLog = DriveLog.init client sessionId
+    Notes = Notes.init deps.Backend sessionId user
+    NoteList = NoteList.init deps.Backend sessionId
+    TodoList = TodoList.init deps.Backend sessionId
+    SessionInfo = SessionInfo.init deps.Backend sessionId user sessionData
+    Journey = Journey.init deps sessionId user avatarName sessionData
+    DriveLog = DriveLog.init deps.Backend sessionId
     ShowDriveLog = false
   }
 
-  let joinCmd = Cmd.OfAsync.perform (fun () -> Firebase.Users.join client sessionId user avatarName) () JoinCompleted
+  let joinCmd = Cmd.OfAsync.perform (fun () -> deps.Backend.Presence.Join sessionId user avatarName) () JoinCompleted
+
   let goalPopupCmd = Cmd.ofMsg (SessionInfoMsg SessionInfo.MaybeShowGoalPopup)
 
   model, Cmd.batch [ joinCmd; goalPopupCmd ]
@@ -82,7 +82,7 @@ let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
 
     let clearDriverCmd =
       match model.Journey.ActiveDriver with
-      | Some driver when driver.Name = model.User -> Cmd.ofMsg (JourneyMsg(Journey.SetActiveDriver None))
+      | Some driver when driver.Name = model.User -> Cmd.ofMsg (JourneyMsg Journey.ClearDriver)
       | _ -> Cmd.none
 
     let exitNotesInsertCmd =
@@ -102,10 +102,7 @@ let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
     let startedCmd =
       match Session.Status.fromString model.SessionData.Status with
       | Session.Status.Created ->
-        Cmd.OfAsync.perform
-          (fun () -> Firebase.Sessions.setStatus model.Client model.SessionId Session.Status.Started)
-          ()
-          (fun () -> StatusWritten)
+        Cmd.OfAsync.perform (fun () -> model.Backend.Sessions.Start model.SessionId) () (fun () -> StatusWritten)
       | _ -> Cmd.none
 
     { model with Status = "connected" }, startedCmd, None
@@ -160,7 +157,8 @@ let subscriptions (model: Model) =
   @ (TodoList.subscriptions model.TodoList |> Subs.map TodoListMsg)
   @ (Journey.subscriptions model.Journey |> Subs.map JourneyMsg)
   @ (DriveLog.subscriptions model.DriveLog |> Subs.map DriveLogMsg)
-  @ Firebase.Sessions.dataSubscription model.Client model.SessionId UpdateSession
+  @ (model.Backend.Sessions.DataSubscription model.SessionId
+     |> Subs.map UpdateSession)
 
 let private outerBindings: KeyBinding<Model, Msg> list = [
   KeyBinding.dynamic (SpecialKey ConsoleKey.Backspace) (fun _ -> {
@@ -209,6 +207,7 @@ let private stageHelp (model: Model) =
 let private canFastForward (model: Model) =
   match model.Journey.Timer.State with
   | Timer.Running -> true
+  | Timer.Breaking _ -> Timer.isSharedBreak model.Journey.Timer
   | _ -> false
 
 let private canNext (model: Model) =
@@ -222,9 +221,12 @@ let private journeyKeyToMsg (model: Model) (gMsg: JourneyKeys.Msg) : Msg =
     // Stop pauses the drive (keeps remaining time); `s` again resumes it.
     match model.Journey.Timer.State with
     | Timer.Running -> JourneyMsg(Journey.TimerMsg Timer.Pause)
-    | Timer.Paused -> JourneyMsg(Journey.TimerMsg Timer.Start)
+    | Timer.Paused -> JourneyMsg(Journey.TimerMsg Timer.Resume)
     | _ -> JourneyMsg Journey.SwitchDriver
-  | JourneyKeys.FastForward -> JourneyMsg(Journey.TimerMsg Timer.SkipTimer)
+  | JourneyKeys.FastForward ->
+    match model.Journey.Timer.State with
+    | Timer.Breaking _ -> JourneyMsg(Journey.TimerMsg Timer.SkipPause)
+    | _ -> JourneyMsg(Journey.TimerMsg Timer.SkipTimer)
   | JourneyKeys.NextDrive -> JourneyMsg Journey.SwitchDriver
   | JourneyKeys.ToggleDriveLog -> ToggleDriveLog
 

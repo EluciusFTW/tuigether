@@ -3,7 +3,6 @@ module Application
 open System
 open Dependencies
 open Elmish
-open Firebase.Database
 open Spectre.Tui
 open Spectre.Tui.App
 open SpectreTuff
@@ -35,6 +34,8 @@ type Model = {
   Tile: Tui48.Model
   OpenGame: Ingame option
   Exiting: bool
+  // None while the backend sends no connection state.
+  Connection: Backend.ConnectionState option
 }
 
 type Msg =
@@ -47,6 +48,7 @@ type Msg =
   | ToggleGame of Ingame
   | SweeperMsg of Tuisweeper.Msg
   | TileMsg of Tui48.Msg
+  | ConnectionChanged of Backend.ConnectionState
   | Tick
   | Exit
 
@@ -131,8 +133,8 @@ let buildPanels (model: Model) : Panel list =
 let private sweeperDeps = Tuisweeper.Dependencies.create Tuisweeper.Highscore.Store.defaultFile
 let private tileDeps = Tui48.Dependencies.create Tui48.Highscore.Store.defaultFile
 
-let init (client: FirebaseClient) (user: string) () =
-  let listModel, listCmd = SessionList.init client user ()
+let init (deps: Dependencies) (user: string) () =
+  let listModel, listCmd = SessionList.init deps.Backend user ()
 
   let avatarName = Journey.resolveName ()
   let sweeperModel, sweeperCmd = Tuisweeper.init sweeperDeps
@@ -151,6 +153,7 @@ let init (client: FirebaseClient) (user: string) () =
     Tile = tileModel
     OpenGame = None
     Exiting = false
+    Connection = None
   },
   Cmd.batch [
     Cmd.map SessionListMsg listCmd
@@ -159,7 +162,7 @@ let init (client: FirebaseClient) (user: string) () =
   ]
 
 let private handleSessionListOutMsg
-  (client: FirebaseClient)
+  (deps: Dependencies)
   (user: string)
   (avatarName: string)
   (model: Model)
@@ -167,7 +170,7 @@ let private handleSessionListOutMsg
   : Model * Cmd<Msg> =
   match out with
   | Some(SessionList.OpenSession(sessionId, sessionData)) ->
-    let viewModel, viewCmd = SessionView.init client user avatarName sessionId sessionData
+    let viewModel, viewCmd = SessionView.init deps user avatarName sessionId sessionData
 
     {
       model with
@@ -177,25 +180,23 @@ let private handleSessionListOutMsg
   | None -> model, []
 
 let private leaveFinalizeCmd
-  (client: FirebaseClient)
+  (backend: Backend.Backend)
   (sessionId: string)
   (user: string)
   (wasStarted: bool)
   (wasDriver: bool)
   : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> SessionOrchestration.leaveAndFinalize client sessionId user wasStarted wasDriver)
-    ()
-    (fun () -> LeaveFinalized)
+  Cmd.OfAsync.perform (fun () -> backend.Presence.Leave sessionId user wasStarted wasDriver) () (fun () ->
+    LeaveFinalized)
 
 let private handleSessionViewOutMsg
-  (client: FirebaseClient)
+  (backend: Backend.Backend)
   (model: Model)
   (out: SessionView.OutMsg option)
   : Model * Cmd<Msg> =
   match out with
   | Some(SessionView.LeaveSession(sessionId, user, wasStarted, wasDriver)) ->
-    { model with Page = SessionListPage }, leaveFinalizeCmd client sessionId user wasStarted wasDriver
+    { model with Page = SessionListPage }, leaveFinalizeCmd backend sessionId user wasStarted wasDriver
   | None -> model, []
 
 let update (deps: Dependencies) (user: string) msg model =
@@ -256,7 +257,7 @@ let update (deps: Dependencies) (user: string) msg model =
     let listModel, listCmd, outMsg = SessionList.update lMsg model.SessionList
 
     let modelAfterList = { model with SessionList = listModel }
-    let modelAfterOut, outCmd = handleSessionListOutMsg deps.Client user model.AvatarName modelAfterList outMsg
+    let modelAfterOut, outCmd = handleSessionListOutMsg deps user model.AvatarName modelAfterList outMsg
     modelAfterOut, Cmd.batch [ Cmd.map SessionListMsg listCmd; outCmd ]
 
   | SessionViewMsg vMsg ->
@@ -264,7 +265,7 @@ let update (deps: Dependencies) (user: string) msg model =
     | SessionViewPage viewModel ->
       let m, sessionCmd, outMsg = SessionView.update deps vMsg viewModel
       let modelAfterView = { model with Page = SessionViewPage m }
-      let modelAfterOut, outCmd = handleSessionViewOutMsg deps.Client modelAfterView outMsg
+      let modelAfterOut, outCmd = handleSessionViewOutMsg deps.Backend modelAfterView outMsg
       modelAfterOut, Cmd.batch [ Cmd.map SessionViewMsg sessionCmd; outCmd ]
     | _ -> model, []
 
@@ -314,6 +315,8 @@ let update (deps: Dependencies) (user: string) msg model =
     | Some Tui48.Closed -> { model with OpenGame = None }, tileCmd
     | None -> model, tileCmd
 
+  | ConnectionChanged state -> { model with Connection = Some state }, []
+
   | Tick -> model, []
 
   | Exit ->
@@ -321,7 +324,9 @@ let update (deps: Dependencies) (user: string) msg model =
     | SessionViewPage _, false -> { model with Exiting = true }, Cmd.ofMsg (SessionViewMsg SessionView.GoBack)
     | _ -> model, TuiCmd.exit
 
-let subscriptions (model: Model) =
+let subscriptions (deps: Dependencies) (model: Model) =
+  let connectionSubs = deps.Backend.Connection.Subscription |> Subs.map ConnectionChanged
+
   let pageSubs =
     match model.Page with
     | SessionListPage -> SessionList.subscriptions model.SessionList |> Subs.map SessionListMsg
@@ -334,7 +339,7 @@ let subscriptions (model: Model) =
     | Some TileGame -> Tui48.subscriptions model.Tile |> Sub.map "tui48" TileMsg
     | None -> []
 
-  pageSubs @ gameSubs
+  connectionSubs @ pageSubs @ gameSubs
 
 let traceToLog msg (model: Model) _ =
   match msg with

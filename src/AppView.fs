@@ -1,17 +1,35 @@
 module AppView
 
+open System
+open Spectre.Console
 open Spectre.Tui
 open Spectre.Tui.App
+open SpectreTuff
 open SpectreTuff.Widgets
 open Tuisweeper
 open Tui48
 open Application
 
+let private connectionText (state: Backend.ConnectionState) =
+  match state with
+  | Backend.Connecting -> "server: connecting…", Color.Yellow
+  | Backend.Connected -> "server: connected", Color.Green
+  | Backend.Disconnected -> "server: connection lost, retrying…", Color.Red
+  | Backend.Refused reason -> sprintf "server: %s" reason, Color.Red
+
 type AppView(model: Model) =
   interface IWidget with
     member _.Render(ctx: RenderContext) =
       let panels = buildPanels model
-      let slotPort = AppLayout.portFor ctx.Viewport (AppLayout.mainLayout model.LogVisible)
+      let connection = model.Connection |> Option.map connectionText
+
+      let connectionWidth =
+        connection
+        // A long refusal reason must leave room for the key help.
+        |> Option.map (fun (text, _) -> min (text.Length + 1) (ctx.Viewport.Width / 2))
+        |> Option.defaultValue 0
+
+      let slotPort = AppLayout.portFor ctx.Viewport (AppLayout.mainLayout model.LogVisible connectionWidth)
 
       for panel in panels do
         let composedWidget =
@@ -57,6 +75,14 @@ type AppView(model: Model) =
         match model.ShowKeymap with
         | true -> ctx.Render(KeymapModal.widget (keymapSections model))
         | false -> ()
+
+      match connection with
+      | Some(text, color) ->
+        ctx.Render(
+          paragraph [ Text.line [ Text.styledSpan (Nullable(Style color)) text ] ],
+          slotPort AppLayout.Connection
+        )
+      | None -> ()
 
       match model.OpenGame with
       | Some SweeperGame -> ctx.Render(Tuisweeper.view model.Sweeper ignore)
