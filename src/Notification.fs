@@ -35,6 +35,12 @@ let send (message: string) =
 
     psi.UseShellExecute <- false
     psi.CreateNoWindow <- true
-    Diagnostics.Process.Start(psi) |> ignore
+    // The child shares the terminal of the full-screen app, so its warnings would draw over the view. The reads
+    // drain the pipes, so a child with much output does not block.
+    psi.RedirectStandardOutput <- true
+    psi.RedirectStandardError <- true
+    let proc = Diagnostics.Process.Start psi
+    proc.BeginOutputReadLine()
+    proc.BeginErrorReadLine()
   with _ ->
     ()
