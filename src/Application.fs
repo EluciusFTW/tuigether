@@ -10,6 +10,7 @@ open SpectreTuff
 open SpectreTuff.Elmish
 open SpectreTuff.Layout
 open SpectreTuff.Widgets
+open Tuisweeper
 
 type Page =
   | SessionListPage
@@ -24,6 +25,8 @@ type Model = {
   LogVisible: bool
   LogModel: Log.Model
   ShowKeymap: bool
+  Sweeper: Tuisweeper.Model
+  ShowSweeper: bool
   Exiting: bool
 }
 
@@ -34,6 +37,8 @@ type Msg =
   | LeaveFinalized
   | ToggleLog
   | ToggleKeymap
+  | ToggleSweeper
+  | SweeperMsg of Tuisweeper.Msg
   | Tick
   | Exit
 
@@ -55,6 +60,7 @@ type Panel = {
 let private globalBindings: Keymap.KeyBinding<unit, Msg> list = [
   Keymap.KeyBinding.create 'q' "quit" Exit
   Keymap.KeyBinding.create 'l' "toggle log" ToggleLog
+  Keymap.KeyBinding.create 't' "tuisweeper" ToggleSweeper
   Keymap.KeyBinding.dynamic (Keymap.CharKey '?') (fun _ -> {
     Description = "keymaps"
     Message =
@@ -112,10 +118,13 @@ let buildPanels (model: Model) : Panel list =
       }
     ]
 
+let private sweeperDeps = Tuisweeper.Dependencies.create Highscore.Store.defaultFile
+
 let init (client: FirebaseClient) (user: string) () =
   let listModel, listCmd = SessionList.init client user ()
 
   let avatarName = Journey.resolveName ()
+  let sweeperModel, sweeperCmd = Tuisweeper.init sweeperDeps
 
   {
     Page = SessionListPage
@@ -126,9 +135,11 @@ let init (client: FirebaseClient) (user: string) () =
     LogVisible = false
     LogModel = Log.init ()
     ShowKeymap = false
+    Sweeper = sweeperModel
+    ShowSweeper = false
     Exiting = false
   },
-  Cmd.map SessionListMsg listCmd
+  Cmd.batch [ Cmd.map SessionListMsg listCmd; Cmd.map SweeperMsg sweeperCmd ]
 
 let private handleSessionListOutMsg
   (client: FirebaseClient)
@@ -173,14 +184,19 @@ let private handleSessionViewOutMsg
 let update (deps: Dependencies) (user: string) msg model =
   match msg with
   | InputMsg key ->
-    match model.ShowKeymap with
-    | true ->
+    match model.ShowSweeper, model.ShowKeymap with
+    // While the game is open it owns the keyboard (it closes itself on q/Esc); 't' toggles it from outside.
+    | true, _ ->
+      match key.KeyChar with
+      | 't' -> model, Cmd.ofMsg ToggleSweeper
+      | _ -> model, Cmd.ofMsg (SweeperMsg(Tuisweeper.InputMsg key))
+    | false, true ->
       match key.Key, key.KeyChar with
       | ConsoleKey.Escape, _
       | _, '?'
       | _, 'q' -> model, Cmd.ofMsg ToggleKeymap
       | _ -> model, []
-    | false ->
+    | false, false ->
 
       let panels = buildPanels model
       let focusedPanel = panels |> List.tryFind (fun p -> p.Number = model.Focus)
@@ -250,6 +266,22 @@ let update (deps: Dependencies) (user: string) msg model =
     },
     []
 
+  | ToggleSweeper ->
+    {
+      model with
+          ShowSweeper = not model.ShowSweeper
+    },
+    []
+
+  | SweeperMsg sMsg ->
+    let sweeperModel, sweeperCmd, outMsg = Tuisweeper.update sweeperDeps sMsg model.Sweeper
+    let model = { model with Sweeper = sweeperModel }
+    let sweeperCmd = Cmd.map SweeperMsg sweeperCmd
+
+    match outMsg with
+    | Some Tuisweeper.Closed -> { model with ShowSweeper = false }, sweeperCmd
+    | None -> model, sweeperCmd
+
   | Tick -> model, []
 
   | Exit ->
@@ -258,11 +290,21 @@ let update (deps: Dependencies) (user: string) msg model =
     | _ -> model, TuiCmd.exit
 
 let subscriptions (model: Model) =
-  match model.Page with
-  | SessionListPage -> SessionList.subscriptions model.SessionList |> Subs.map SessionListMsg
-  | SessionViewPage vm -> SessionView.subscriptions vm |> Subs.map SessionViewMsg
+  let pageSubs =
+    match model.Page with
+    | SessionListPage -> SessionList.subscriptions model.SessionList |> Subs.map SessionListMsg
+    | SessionViewPage vm -> SessionView.subscriptions vm |> Subs.map SessionViewMsg
+
+  // Elmish's Sub.map prefixes the ids: tuisweeper's generic "tick" id must not clash with ours.
+  let sweeperSubs =
+    match model.ShowSweeper with
+    | true -> Tuisweeper.subscriptions model.Sweeper |> Sub.map "tuisweeper" SweeperMsg
+    | false -> []
+
+  pageSubs @ sweeperSubs
 
 let traceToLog msg (model: Model) _ =
   match msg with
-  | Tick -> ()
+  | Tick
+  | SweeperMsg Tuisweeper.Tick -> ()
   | _ -> Log.append (sprintf "%A" msg) model.LogModel

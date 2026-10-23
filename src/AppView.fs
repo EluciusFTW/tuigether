@@ -3,6 +3,7 @@ module AppView
 open Spectre.Tui
 open Spectre.Tui.App
 open SpectreTuff.Widgets
+open Tuisweeper
 open Application
 
 type AppView(model: Model) =
@@ -45,8 +46,7 @@ type AppView(model: Model) =
       | KeymapModal.Inline ->
         let helpMaps =
           match model.Page with
-          | SessionViewPage viewModel ->
-            [ SessionView.keyMap viewModel; globalKeyMap ]
+          | SessionViewPage viewModel -> [ SessionView.keyMap viewModel; globalKeyMap ]
           | _ -> [ globalKeyMap ]
 
         ctx.Render(help helpMaps |> leftAligned, slotPort AppLayout.Help)
@@ -57,4 +57,9 @@ type AppView(model: Model) =
         | true -> ctx.Render(KeymapModal.widget (keymapSections model))
         | false -> ()
 
-let view (model: Model) _dispatch = AppView model
+      match model.ShowSweeper with
+      | true -> ctx.Render(Tuisweeper.view model.Sweeper ignore)
+      | false -> ()
+
+let view (model: Model) _dispatch =
+  AppView model
