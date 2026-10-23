@@ -108,6 +108,12 @@ mutate *args:
     dotnet tool restore
     dotnet stryker "$@"
 
+# The Bobcat UI on port 5525: live spec runs and the Event Model, in the browser. Extra arguments go to `bobcat ui`, e.g. --no-browser.
+[positional-arguments]
+bobcat-ui *args:
+    dotnet tool restore
+    dotnet bobcat ui "$@"
+
 _client node user key:
     TUIGETHER_BACKEND=server \
     TUIGETHER_SERVER_URL=http://localhost:{{ if node == "a" { "5101" } else { "5102" } }} \
