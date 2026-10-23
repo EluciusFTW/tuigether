@@ -1,0 +1,80 @@
+# Sync
+
+This doc tells you how tuigether clients share state through Firebase, and why the sync tripwires in
+[`CLAUDE.md`](../../CLAUDE.md) exist. Read it before you change `Backend.fs`, `Firebase.fs`, `Session.fs`, a lock, or the timer.
+
+## Where it lives
+
+- `Firebase.fs` owns every database path, read, write and subscription, in one submodule per area (`Sessions`,
+  `Users`, `Notes`, `NoteList`, `Todo`, `Timer`, `History`). No other file builds a query.
+- `Backend.fs` is the seam between the components and a sync backend. `FirebaseBackend.fs` implements it with
+  `Firebase.fs`. See [Backend seam](#backend-seam).
+- `Session.fs` holds the wire records.
+- Timestamps are Unix milliseconds from `Clock.nowMs ()`.
+
+## Wire format and mixed versions
+
+Each user installs their own binary with `scripts/install.sh` or `scripts/install.ps1`. One session therefore often
+has clients on different versions, and every record must stay readable in both directions.
+
+- The `Session.fs` records are `[<CLIMutable>]`, and Newtonsoft.Json serializes them. A field name is a JSON key in
+  the database.
+- Many writes address one field by a string literal that equals the record field name, for example
+  `node.Child "GitBranch"` in `Firebase.Sessions`. A rename must change the literal too, and existing data still has
+  the old key. A renamed field therefore reads as missing on every client.
+- An old client ignores a field that it does not know. A new client reads a missing field as the default: `null` for
+  a string, `0` for a number. Check a new string field with `isNull`, as `SessionInfo.fs` does.
+- A whole-record write (`Firebase.Timer.save` writes the full `TimerState`) contains only the fields that the writer
+  knows. An old client therefore deletes a new field on its next save. Put a new field where clients write it one
+  field at a time, or accept that it resets.
+- Newtonsoft writes an F# union as `{"Case": …}`. Union-valued fields therefore stay `string`, and the union's
+  `toString`/`fromString` convert them (`Session.Status`, `Session.DriveEventType`). `fromString` maps an unknown
+  string to a default case, so an old client reads a new case as that default instead of failing.
+
+## Subscriptions
+
+- Most areas use `subscribeReload`. Any child event under the path triggers a full reload through the area's
+  `load`, and one initial load runs on registration. A path with mixed children cannot deserialize per-child events
+  into one record, so this is the reliable form.
+- `Firebase.Users` uses a typed `AsObservable` stream, because each child is one `UserPresence`.
+- The `Sessions` subscription watches all of `/sessions`. An edit in any session reloads the whole session list.
+
+## Writes
+
+- Widget writes are fire-and-forget. `Firebase.swallow` drops a failure, and the next change event re-syncs the
+  state. A function returns `Result` only when its caller acts on the failure: `Sessions.create`, `Sessions.delete`,
+  `Users.join`, `Users.leave`.
+- On quit, the app exits only after `Presence.Leave` completes, so the leave writes finish first.
+- List and todo items use keys from `Firebase.PushId.generate`. The keys sort by creation time, and concurrent
+  clients do not collide. `TodoList` reorders items by swapping content between two fixed keys.
+
+## Locks and the timer
+
+- The goal and the freetext notes allow one writer at a time. `Locking.fs` holds the time rules: a lock expires 60 s
+  after its last refresh, and each debounced save refreshes it. So the lock of a crashed client expires.
+- `TimerState.EndsAt` is the absolute instant when a running drive ends. Every client derives the remaining time from
+  its own clock and `EndsAt`. `RemainingSeconds` holds the frozen value while the timer is paused or idle.
+
+## Backend seam
+
+`Backend.fs` is the seam between the components and a sync backend. `Dependencies.Backend` carries it.
+
+- Each group of the seam covers one area. Each function is one user intention. No function names a database path.
+- Two areas use the seam. `Sessions` holds the Session list, create, delete, start and the Session data. `Presence`
+  holds join, leave and the presence of the Users. All other areas call `Firebase.fs` directly through
+  `Dependencies.Client` and `Firebase.Persistence`.
+- A subscription returns a `Sub` of the area's event. The consumer maps it to its own message with `Subs.map`.
+  `Presence.Subscription` takes a subscriber tag, so each consumer keeps its own subscription key.
+- `SessionView` calls `Sessions.Start` after a successful `Presence.Join` when it sees a Created Session.
+  `Presence.Leave` also pauses the Drive when the Driver leaves, and sets a Started Session to Finished when the
+  last Participant leaves. The Firebase backend runs these steps in the Client. Each step writes from a value that
+  the Client read before, so two Clients can race.
+
+### Presence events
+
+The presence subscription dispatches one `UserEvent` per User: `UserChanged` or `UserRemoved`. Firebase sends this
+shape. `Journey` keeps the Participants in the order of the events, and it rotates the Driver in that order.
+
+A backend that receives one Participants snapshot per change converts it inside its own subscription. It diffs each
+snapshot against the previous one. It dispatches `UserChanged` for each new or changed User, in snapshot order, and
+`UserRemoved` for each missing User. The components therefore stay the same for each backend.
