@@ -46,6 +46,9 @@ Known conflicts:
 - **Broadcast to all nodes.** `BroadcastToAllNodesAsync` has no cascading-message form. Return an `ISideEffect`
   whose `ExecuteAsync(IMessageBus bus)` calls it, as `BroadcastSessionChanged` does. The endpoint stays a pure
   function, and the outbox holds the broadcast until the transaction commits.
+- **Messages from a hub event.** A SignalR hub is not a Wolverine handler, so it has no return value for cascading
+  messages. A hub override such as `OnDisconnectedAsync` sends its message through an injected `IMessageBus`, as
+  `TuigetherHub` does.
 - **Rejection of a SignalR connect.** Throw a `HubException` from `OnConnectedAsync`. SignalR sends its message to
   the client in the close message. An HTTP rejection of the connect reaches the .NET SignalR client only as a status
   code. This rule comes from ASP.NET Core SignalR, because a Wolverine hub derives from its `Hub`.

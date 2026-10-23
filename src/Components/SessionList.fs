@@ -169,7 +169,9 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
     },
     [],
     None
-  | SessionsEvent(Backend.SessionChanged(id, data)) when not (String.IsNullOrEmpty id) && not (isNull (data :> obj)) ->
+  | SessionsEvent(Backend.SessionChanged(id, data, connectedUsers)) when
+    not (String.IsNullOrEmpty id) && not (isNull (data :> obj))
+    ->
     let sessions =
       model.Sessions
       |> List.filter (fun (k, _) -> k <> id)
@@ -178,6 +180,7 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
     {
       model with
           Sessions = sortSessions sessions
+          ConnectedUsers = model.ConnectedUsers |> Map.add id connectedUsers
     },
     [],
     None

@@ -1,13 +1,16 @@
 using JasperFx;
 using JasperFx.Events.Projections;
 using Marten;
+using Microsoft.AspNetCore.SignalR;
 using Tuigether.Contracts;
 using Tuigether.Server;
+using Tuigether.Server.Presence;
 using Tuigether.Server.Push;
 using Tuigether.Server.Requests;
 using Tuigether.Server.Sessions;
 using Tuigether.Server.Startup;
 using Wolverine;
+using Wolverine.ErrorHandling;
 using Wolverine.Http;
 using Wolverine.Marten;
 using Wolverine.SignalR;
@@ -23,6 +26,7 @@ builder.Services
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddHostedService<ContractsVersionCheck>();
 builder.Services.AddHealthChecks();
+builder.Services.AddSingleton<IUserIdProvider, UserNameHeaderProvider>();
 
 builder.Services
     .AddMarten(options =>
@@ -37,6 +41,8 @@ builder.Services
 
         options.Projections.Snapshot<Session>(SnapshotLifecycle.Inline);
         options.Projections.Add<SessionSummaryProjection>(ProjectionLifecycle.Inline);
+        options.Projections.Add<SessionDataProjection>(ProjectionLifecycle.Inline);
+        options.Projections.Add<SessionParticipantsProjection>(ProjectionLifecycle.Inline);
     })
     .IntegrateWithWolverine()
     .UseLightweightSessions();
@@ -52,9 +58,25 @@ builder.Host.UseWolverine(static options =>
     // BroadcastToAllNodesAsync reaches the other nodes only in this mode.
     options.Durability.Mode = DurabilityMode.Balanced;
 
-    options.UseSignalR<TuigetherHub>();
+    // A scheduled message runs close to its time only with a short polling interval. The default is 5 seconds.
+    options.Durability.ScheduledJobPollingTime = TimeSpan.FromSeconds(1);
+
+    // Two handlers that append to one Session at the same moment: the second one runs again against the new state.
+    options.Policies.OnException<ConcurrencyException>().RetryWithCooldown(
+        TimeSpan.FromMilliseconds(50),
+        TimeSpan.FromMilliseconds(100),
+        TimeSpan.FromMilliseconds(250));
+
+    // A durable queue keeps a scheduled leave check across a node restart.
+    options.PublishMessage<CheckParticipantLeft>().ToLocalQueue("presence").UseDurableInbox();
+
+    // Inline: a hub call returns after its handler ran. SignalR runs the calls of one connection one at a time, so
+    // the node handles the messages of a Client in their order, for example a close and the next open.
+    options.UseSignalR<TuigetherHub>().ProcessInline();
     options.PublishMessage<SessionSummary>().ToSignalR();
     options.PublishMessage<SessionRemoved>().ToSignalR();
+    options.PublishMessage<SessionData>().ToSignalR();
+    options.PublishMessage<SessionParticipants>().ToSignalR();
 });
 
 builder.Services.AddWolverineHttp();

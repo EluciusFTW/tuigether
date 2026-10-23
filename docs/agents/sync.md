@@ -110,4 +110,11 @@ no-op.
 - `IConnection` reports the connection state. The app shows it in the footer. The Firebase backend reports none.
 - The backend shows each rejected Command and each refusal as a notification with the reason of the server. The
   components change their model only from snapshots.
+- `Presence.Join` sends `OpenSession` with the avatar. The node answers with all snapshots of the Session. The backend
+  remembers the open Session and sends `OpenSession` again after each connect. `Presence.Leave` sends `CloseSession`
+  and waits for the node.
+- The server appends the join, the leave, `SessionStarted` and `SessionFinished` itself. `Sessions.Start` is a no-op,
+  and `Presence.Leave` writes nothing else. A User leaves after the grace period of the server (`LeaveGracePeriod`,
+  default 10 seconds), when no other Client of the User has the Session open.
+- The backend keeps the last message of each type. A subscription that starts after a push gets that message at once.
 - An area that the server does not serve yet is a stub: its subscription sends nothing, and its intentions do nothing.

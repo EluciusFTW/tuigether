@@ -7,7 +7,7 @@ type SessionEvent =
   // Connected users per Session id ride along with the Session list, so the list needs no per-Session presence
   // subscription.
   | SessionsLoaded of sessions: (string * Session.Data) list * connectedUsers: Map<string, Set<string>>
-  | SessionChanged of string * Session.Data
+  | SessionChanged of string * Session.Data * connectedUsers: Set<string>
   | SessionRemoved of string
   | ConnectionError of string
 

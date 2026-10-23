@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
 using Tuigether.Contracts;
+using Tuigether.Server.Presence;
 using Tuigether.Server.Requests;
+using Wolverine;
 using Wolverine.SignalR;
 using Wolverine.SignalR.Internals;
 
@@ -11,9 +13,14 @@ namespace Tuigether.Server.Push;
 /// The SignalR hub of a node. It checks the headers of each connect, as <see cref="RequestCheckMiddleware"/> does for
 /// a Command. The middleware already rejects a connect with a wrong API key.
 /// </summary>
-public sealed class TuigetherHub(SignalRTransport endpoint, IOptions<ServerOptions> options) : WolverineHub(endpoint)
+public sealed class TuigetherHub(SignalRTransport endpoint, IOptions<ServerOptions> options, IMessageBus bus) : WolverineHub(endpoint)
 {
     public const string SessionListGroup = "session-list";
+
+    /// <summary>
+    /// The push group of the connections that have the Session open on this node.
+    /// </summary>
+    public static string SessionGroup(Guid sessionId) => $"session-{sessionId}";
 
     public override async Task OnConnectedAsync()
     {
@@ -32,5 +39,17 @@ public sealed class TuigetherHub(SignalRTransport endpoint, IOptions<ServerOptio
         }
 
         await base.OnConnectedAsync();
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        try
+        {
+            await bus.InvokeAsync(new ClientDisconnected(Context.ConnectionId));
+        }
+        finally
+        {
+            await base.OnDisconnectedAsync(exception);
+        }
     }
 }

@@ -57,16 +57,20 @@ public abstract class ServerSpec(ServerFixture server) : WolverineHttpSpec(serve
     /// Waits until <paramref name="arrived"/> answers true. It stops at the first error that a node of the spec logs,
     /// so a failed handler fails the spec at once and names the error.
     /// </summary>
-    protected async Task ThenEventuallyPushed(Func<bool> arrived, string because)
+    protected Task ThenEventuallyPushed(Func<bool> arrived, string because) =>
+        ThenEventually(() => Task.FromResult(arrived()), because);
+
+    /// <inheritdoc cref="ThenEventuallyPushed"/>
+    protected async Task ThenEventually(Func<Task<bool>> arrived, string because)
     {
         var waited = Stopwatch.StartNew();
-        while (!arrived() && NodeErrorsSoFar().Count == 0 && waited.Elapsed < PushTimeout)
+        while (!await arrived() && NodeErrorsSoFar().Count == 0 && waited.Elapsed < PushTimeout)
         {
             await Task.Delay(TimeSpan.FromMilliseconds(100));
         }
 
         var errors = NodeErrorsSoFar();
-        SpecAssert.Fact(arrived(), errors.Count > 0 ? $"{because}. A node logged: {string.Join(" | ", errors)}" : because);
+        SpecAssert.Fact(await arrived(), errors.Count > 0 ? $"{because}. A node logged: {string.Join(" | ", errors)}" : because);
     }
 
     private List<string> NodeErrorsSoFar() =>

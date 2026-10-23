@@ -18,6 +18,11 @@ public sealed class ServerFixture : IAsyncLifetime
     /// </summary>
     public static readonly DateTimeOffset Now = new(2026, 10, 23, 9, 0, 0, TimeSpan.Zero);
 
+    /// <summary>
+    /// Long enough for a Client to open a Session again within it, short enough for a spec to wait for its end.
+    /// </summary>
+    public static readonly TimeSpan LeaveGracePeriod = TimeSpan.FromSeconds(2);
+
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
 
     private IAlbaHost? _host;
@@ -49,6 +54,7 @@ public sealed class ServerFixture : IAsyncLifetime
                 }))
             .WithConfiguration("ConnectionStrings:Postgres", _postgres.GetConnectionString())
             .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.ApiKey)}", ApiKey)
+            .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.LeaveGracePeriod)}", LeaveGracePeriod.ToString())
             .StartAsync();
 
     public async ValueTask DisposeAsync()

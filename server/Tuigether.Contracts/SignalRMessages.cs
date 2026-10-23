@@ -53,3 +53,16 @@ public sealed record SessionList
 }
 
 public sealed record SessionRemoved(Guid SessionId);
+
+/// <summary>
+/// Opens a Session for this connection. The server answers with all snapshots of the Session, and then it pushes
+/// each snapshot that changes. The first open Client of a User makes the User a Participant.
+/// </summary>
+/// <param name="Avatar">The avatar of the User on the journey panel.</param>
+public sealed record OpenSession(Guid SessionId, string Avatar);
+
+/// <summary>
+/// Closes the Session for this connection. A closed connection also closes its Session. The User leaves the Session
+/// after the grace period of the server, when no other Client of the User has the Session open.
+/// </summary>
+public sealed record CloseSession(Guid SessionId);

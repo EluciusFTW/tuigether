@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using JasperFx;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace Tuigether.Server.Specs;
 
@@ -33,10 +35,20 @@ public sealed class NodeErrors : ILoggerProvider
             Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (IsEnabled(logLevel) && exception is not null)
+            if (IsEnabled(logLevel) && exception is not null && !IsRetriedConflict(exception))
             {
                 errors.Enqueue($"{category}: {exception.GetType().Name}: {exception.Message}");
             }
         }
+
+        // Two handlers that append to one stream at the same moment: Marten logs the conflict, and Wolverine runs
+        // the second handler again. A spec of such a race checks the outcome, not the log.
+        private static bool IsRetriedConflict(Exception exception) =>
+            exception is ConcurrencyException
+                or PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "pk_mt_events_stream_and_version" }
+                or PostgresException { SqlState: MartenStreamVersionMismatch };
+
+        // Marten's append function raises it when the expected version of a stream is not its current version.
+        private const string MartenStreamVersionMismatch = "MT003";
     }
 }

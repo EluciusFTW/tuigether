@@ -1,6 +1,7 @@
 module ServerBackend
 
 open System
+open System.Collections.Concurrent
 open System.Net
 open System.Net.Http
 open System.Net.Http.Json
@@ -33,6 +34,9 @@ let private retryDelay (previousAttempts: int64) =
   | 1L -> TimeSpan.FromSeconds 2.0
   | 2L -> TimeSpan.FromSeconds 5.0
   | _ -> TimeSpan.FromSeconds 10.0
+
+// A send waits for the handler on the node. On quit, the app waits for the close of the Session at most this long.
+let private sendTimeout = TimeSpan.FromSeconds 5.0
 
 let private unauthorizedReason = "The server rejects the API key. Check serverApiKey."
 
@@ -72,6 +76,8 @@ type private Hub(config: Config, notify: string -> unit) =
   let states = Listeners<Backend.ConnectionState>()
   let messages = Listeners<string * JsonElement>()
   let connects = Listeners<unit>()
+  // The last message of each type, so that a subscription that starts after a push still gets it.
+  let latest = ConcurrentDictionary<string, JsonElement>()
 
   let connection =
     HubConnectionBuilder()
@@ -138,7 +144,10 @@ type private Hub(config: Config, notify: string -> unit) =
         Log.line (sprintf "server message unreadable: %s" error.Message)
         None
 
-    parsed |> Option.iter messages.Send
+    parsed
+    |> Option.iter (fun (typeName, data) ->
+      latest[typeName] <- data
+      messages.Send(typeName, data))
 
   // The automatic reconnect of SignalR does not cover the first connect.
   let rec connect (attempt: int64) =
@@ -206,6 +215,20 @@ type private Hub(config: Config, notify: string -> unit) =
   member _.OnMessage(listener: string * JsonElement -> unit) : IDisposable =
     messages.Add listener
 
+  // Like `OnMessage`, for the messages of one type. It also sends the last such message now.
+  member _.OnLatest(typeName: string, listener: JsonElement -> unit) : IDisposable =
+    let registration =
+      messages.Add(fun (name, data) ->
+        match name = typeName with
+        | true -> listener data
+        | false -> ())
+
+    match latest.TryGetValue typeName with
+    | true, data -> listener data
+    | false, _ -> ()
+
+    registration
+
   // Runs `action` now when the connection is up, and again after each later connect.
   member _.OnConnected(action: unit -> unit) : IDisposable =
     let registration = connects.Add action
@@ -216,8 +239,9 @@ type private Hub(config: Config, notify: string -> unit) =
 
     registration
 
-  // The hub reads a CloudEvents envelope, see `HubProtocol.ReceiveMessage`.
-  member _.Send(message: obj) =
+  // The hub reads a CloudEvents envelope, see `HubProtocol.ReceiveMessage`. The send completes after the node handled
+  // the message, or after a failure.
+  member _.SendAsync(message: obj) : Async<Result<unit, string>> =
     let envelope =
       JsonSerializer.Serialize(
         {|
@@ -229,13 +253,21 @@ type private Hub(config: Config, notify: string -> unit) =
 
     async {
       try
+        use timeout = new CancellationTokenSource(sendTimeout)
+
         do!
-          connection.InvokeAsync(HubProtocol.ReceiveMessage, envelope, CancellationToken.None)
+          connection.InvokeAsync(HubProtocol.ReceiveMessage, envelope, timeout.Token)
           |> Async.AwaitTask
+
+        return Ok()
       with error ->
-        Log.line (sprintf "server send of %s failed: %s" (message.GetType().Name) error.Message)
+        let reason = sprintf "server send of %s failed: %s" (message.GetType().Name) error.Message
+        Log.line reason
+        return Error reason
     }
-    |> Async.Start
+
+  member this.Send(message: obj) =
+    this.SendAsync message |> Async.Ignore |> Async.Start
 
 let private reasonOf (response: HttpResponseMessage) : Async<string> =
   async {
@@ -305,21 +337,35 @@ let private toStatus (status: SessionStatus) =
   | SessionStatus.Finished -> Session.Status.Finished
   | _ -> Session.Status.Created
 
-let private toData (summary: SessionSummary) : Session.Data = {
-  Title = summary.Title
-  Goal = ""
-  StartedAt = summary.CreatedAt.ToUnixTimeMilliseconds()
-  WorkStartedAt = 0L
-  Creator = summary.CreatedBy
-  ActiveDriver = null
-  Status = Session.Status.toString (toStatus summary.Status)
-  GoalLockOwner = null
-  GoalLockedAt = 0L
-  GitBranch = summary.Branch
-  GitRepo = summary.Repository
-  LastWipPushAt = 0L
-  LastWipPushBy = null
-}
+let private toData
+  (title: string)
+  (status: SessionStatus)
+  (createdBy: string)
+  (repository: string)
+  (branch: string)
+  (createdAt: DateTimeOffset)
+  : Session.Data =
+  {
+    Title = title
+    Goal = ""
+    StartedAt = createdAt.ToUnixTimeMilliseconds()
+    WorkStartedAt = 0L
+    Creator = createdBy
+    ActiveDriver = null
+    Status = Session.Status.toString (toStatus status)
+    GoalLockOwner = null
+    GoalLockedAt = 0L
+    GitBranch = branch
+    GitRepo = repository
+    LastWipPushAt = 0L
+    LastWipPushBy = null
+  }
+
+let private summaryData (summary: SessionSummary) =
+  toData summary.Title summary.Status summary.CreatedBy summary.Repository summary.Branch summary.CreatedAt
+
+let private sessionData (data: SessionData) =
+  toData data.Title data.Status data.CreatedBy data.Repository data.Branch data.CreatedAt
 
 let private sessionEvent (typeName: string, data: JsonElement) : Backend.SessionEvent option =
   match typeName with
@@ -328,13 +374,18 @@ let private sessionEvent (typeName: string, data: JsonElement) : Backend.Session
 
     let sessions =
       list.Sessions
-      |> Seq.map (fun summary -> string summary.Id, toData summary)
+      |> Seq.map (fun summary -> string summary.Id, summaryData summary)
       |> List.ofSeq
 
-    Some(Backend.SessionsLoaded(sessions, Map.empty))
+    let connectedUsers =
+      list.Sessions
+      |> Seq.map (fun summary -> string summary.Id, Set.ofSeq summary.Participants)
+      |> Map.ofSeq
+
+    Some(Backend.SessionsLoaded(sessions, connectedUsers))
   | name when name = typeof<SessionSummary>.FullName ->
     let summary = data.Deserialize<SessionSummary> json
-    Some(Backend.SessionChanged(string summary.Id, toData summary))
+    Some(Backend.SessionChanged(string summary.Id, summaryData summary, Set.ofSeq summary.Participants))
   | name when name = typeof<SessionRemoved>.FullName ->
     let removed = data.Deserialize<SessionRemoved> json
     Some(Backend.SessionRemoved(string removed.SessionId))
@@ -346,6 +397,52 @@ let private readSessionEvent (message: string * JsonElement) =
   with error ->
     Log.line (sprintf "server message %s unreadable: %s" (fst message) error.Message)
     None
+
+// The `UserEvent`s that turn the Participants `previous` into `current`, see "Presence events" in docs/agents/sync.md.
+let private participantEvents
+  (previous: (string * string) list)
+  (current: (string * string) list)
+  : Backend.UserEvent list =
+  let removed =
+    previous
+    |> List.filter (fun (user, _) -> current |> List.forall (fun (other, _) -> other <> user))
+    |> List.map (fun (user, _) -> Backend.UserRemoved user)
+
+  let changed =
+    current
+    |> List.filter (fun participant -> not (List.contains participant previous))
+    |> List.map (fun (user, avatar) ->
+      Backend.UserChanged(
+        user,
+        {
+          Session.UserPresence.Avatar = avatar
+          Session.UserPresence.Mood = "Neutral"
+        }
+      ))
+
+  removed @ changed
+
+// Reads the snapshot of type 'snapshot and passes it on when it belongs to `sessionId`.
+let private onSnapshotOf<'snapshot>
+  (hub: Hub)
+  (sessionId: string)
+  (idOf: 'snapshot -> Guid)
+  (listener: 'snapshot -> unit)
+  : IDisposable =
+  hub.OnLatest(
+    typeof<'snapshot>.FullName,
+    fun data ->
+      let snapshot =
+        try
+          Some(data.Deserialize<'snapshot> json)
+        with error ->
+          Log.line (sprintf "server message %s unreadable: %s" typeof<'snapshot>.Name error.Message)
+          None
+
+      match snapshot with
+      | Some snapshot when string (idOf snapshot) = sessionId -> listener snapshot
+      | _ -> ()
+  )
 
 let private disposeAll (registrations: IDisposable list) =
   { new IDisposable with
@@ -366,6 +463,15 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
 
   let post route command read =
     post http notify route command read
+
+  // The Session that this Client has open, with the avatar of the User. A new connection opens it again.
+  let openSession = ref None
+
+  hub.OnConnected(fun () ->
+    match openSession.Value with
+    | Some(sessionId: Guid, avatar: string) -> hub.Send(OpenSession(sessionId, avatar))
+    | None -> ())
+  |> ignore
 
   {
     Connection =
@@ -402,17 +508,47 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
           member _.Start _sessionId =
             nothing
 
-          member _.DataSubscription _sessionId = []
+          member _.DataSubscription sessionId = [
+            [ "server-session-data"; sessionId ],
+            fun dispatch -> onSnapshotOf<SessionData> hub sessionId _.Id (sessionData >> Some >> dispatch)
+          ]
       }
     Presence =
       { new Backend.IPresence with
-          member _.Join _sessionId _user _avatarName =
-            async { return Ok() }
+          // The server takes the user from the connect. It also sets a Created Session to Started. After a failed
+          // send, the next connect opens the Session.
+          member _.Join sessionId _user avatarName =
+            match Guid.TryParse sessionId with
+            | true, id ->
+              openSession.Value <- Some(id, avatarName)
+              hub.SendAsync(OpenSession(id, avatarName))
+            | false, _ -> async { return Error(sprintf "%s is not a Session id of the server." sessionId) }
 
-          member _.Leave _sessionId _user _wasStarted _wasDriver =
-            nothing
+          // The server finishes the Session when its last Participant leaves.
+          member _.Leave sessionId _user _wasStarted _wasDriver =
+            match Guid.TryParse sessionId with
+            | true, id ->
+              openSession.Value <- None
+              hub.SendAsync(CloseSession id) |> Async.Ignore
+            | false, _ -> nothing
 
-          member _.Subscription _sessionId _subscriberTag = []
+          member _.Subscription sessionId subscriberTag = [
+            [ "server-presence"; subscriberTag; sessionId ],
+            fun dispatch ->
+              let previous = ref []
+
+              onSnapshotOf<SessionParticipants> hub sessionId _.Id (fun snapshot ->
+                let current =
+                  snapshot.Participants
+                  |> Seq.map (fun participant -> participant.User, participant.Avatar)
+                  |> List.ofSeq
+
+                // The replay of `OnLatest` and a push can run at the same moment.
+                lock previous (fun () ->
+                  let events = participantEvents previous.Value current
+                  previous.Value <- current
+                  events |> List.iter dispatch))
+          ]
       }
     Driving =
       { new Backend.IDriving with
