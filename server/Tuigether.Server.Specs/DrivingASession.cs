@@ -1,6 +1,6 @@
 using Marten;
 using Microsoft.Extensions.DependencyInjection;
-using Tuigether.Server.Sessions;
+using Tuigether.Server.Domain;
 
 namespace Tuigether.Server.Specs;
 

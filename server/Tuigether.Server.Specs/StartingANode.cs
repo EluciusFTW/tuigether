@@ -1,4 +1,4 @@
-using Tuigether.Server.Startup;
+using Tuigether.Server.Shared.Startup;
 
 namespace Tuigether.Server.Specs;
 

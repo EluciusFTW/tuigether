@@ -1,15 +1,12 @@
 using JasperFx;
-using JasperFx.Events.Projections;
 using Marten;
-using Microsoft.AspNetCore.SignalR;
-using Tuigether.Contracts;
-using Tuigether.Server;
+using Tuigether.Server.Domain;
 using Tuigether.Server.Driving;
 using Tuigether.Server.Presence;
-using Tuigether.Server.Push;
-using Tuigether.Server.Requests;
 using Tuigether.Server.Sessions;
-using Tuigether.Server.Startup;
+using Tuigether.Server.Shared;
+using Tuigether.Server.Shared.Hubs;
+using Tuigether.Server.Shared.Requests;
 using Wolverine;
 using Wolverine.ErrorHandling;
 using Wolverine.Http;
@@ -25,9 +22,8 @@ builder.Services
     .ValidateOnStart();
 
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddHostedService<ContractsVersionCheck>();
+builder.Services.AddShared();
 builder.Services.AddHealthChecks();
-builder.Services.AddSingleton<IUserIdProvider, UserNameHeaderProvider>();
 
 builder.Services
     .AddMarten(options =>
@@ -39,13 +35,6 @@ builder.Services
 
         // Bobcat finds the events that a request caused by its correlation id.
         options.Events.MetadataConfig.CorrelationIdEnabled = true;
-
-        options.Projections.Snapshot<Session>(SnapshotLifecycle.Inline);
-        options.Projections.Add<SessionSummaryProjection>(ProjectionLifecycle.Inline);
-        options.Projections.Add<SessionDataProjection>(ProjectionLifecycle.Inline);
-        options.Projections.Add<SessionParticipantsProjection>(ProjectionLifecycle.Inline);
-        options.Projections.Add<SessionTimerProjection>(ProjectionLifecycle.Inline);
-        options.Projections.Add<SessionDriveHistoryProjection>(ProjectionLifecycle.Inline);
     })
     .IntegrateWithWolverine()
     .UseLightweightSessions();
@@ -70,27 +59,25 @@ builder.Host.UseWolverine(static options =>
         TimeSpan.FromMilliseconds(100),
         TimeSpan.FromMilliseconds(250));
 
-    // A durable queue keeps a scheduled leave check across a node restart.
-    options.PublishMessage<CheckParticipantLeft>().ToLocalQueue("presence").UseDurableInbox();
-
+    // UseSignalR registers services, so it cannot move into a module (docs/agents/csharp.md, "SignalR in a module").
     // Inline: a hub call returns after its handler ran. SignalR runs the calls of one connection one at a time, so
     // the node handles the messages of a Client in their order, for example a close and the next open.
     options.UseSignalR<TuigetherHub>().ProcessInline();
-    options.PublishMessage<SessionSummary>().ToSignalR();
-    options.PublishMessage<SessionRemoved>().ToSignalR();
-    options.PublishMessage<SessionData>().ToSignalR();
-    options.PublishMessage<SessionParticipants>().ToSignalR();
-    options.PublishMessage<SessionTimer>().ToSignalR();
-    options.PublishMessage<SessionDriveHistory>().ToSignalR();
 });
+
+builder.Services
+    .AddDomain()
+    .AddSessions()
+    .AddPresence()
+    .AddDriving();
 
 builder.Services.AddWolverineHttp();
 
 var app = builder.Build();
 
-app.UseMiddleware<RequestCheckMiddleware>();
+app.UseRequestCheck();
 app.MapHealthChecks(ServerRoutes.Health);
-app.MapWolverineSignalRHub<TuigetherHub>(HubProtocol.Path);
+app.MapTuigetherHub();
 app.MapWolverineEndpoints(static options => options.ApplyCorrelationIdHeaderToAllEndpoints = true);
 
 return await app.RunJasperFxCommands(args);

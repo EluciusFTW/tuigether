@@ -1,0 +1,20 @@
+using Tuigether.Server.Shared;
+
+namespace Tuigether.Server.Domain;
+
+public static class SessionRules
+{
+    /// <summary>
+    /// Every Command on an existing Session passes this rule first.
+    /// </summary>
+    public static Result<Session, string> CheckNotDeleted(Session session) =>
+        session.IsDeleted
+            ? Result.Error("The Session is deleted.")
+            : Result.Ok(session);
+
+    /// <summary>
+    /// The time that a running Drive has left at <paramref name="now"/>.
+    /// </summary>
+    public static TimeSpan DriveRemaining(DateTimeOffset endsAt, DateTimeOffset now) =>
+        endsAt > now ? endsAt - now : TimeSpan.Zero;
+}

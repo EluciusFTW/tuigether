@@ -2,6 +2,7 @@ using Alba;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Testcontainers.PostgreSql;
+using Tuigether.Server.Shared;
 using Wolverine;
 
 namespace Tuigether.Server.Specs;

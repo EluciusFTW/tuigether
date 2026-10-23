@@ -4,7 +4,7 @@ using Marten;
 using Marten.Events.Archiving;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
-using Tuigether.Server.Sessions;
+using Tuigether.Server.Domain;
 
 namespace Tuigether.Server.Specs;
 

@@ -1,4 +1,5 @@
 using Alba;
+using Tuigether.Server.Shared;
 
 namespace Tuigether.Server.Specs;
 

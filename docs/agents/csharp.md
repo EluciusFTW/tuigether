@@ -46,23 +46,24 @@ Known conflicts:
 - **Command (mediator style).** A Wolverine retry policy applies to a message handler, also inline through
   `IMessageBus.InvokeAsync`, but not to an HTTP endpoint. A Command on an existing Session must run again against the
   new state after a concurrency conflict. Its endpoint therefore stays thin: it wraps the Command and the user name into
-  a message (`RotateDriverBy`) and calls `SessionCommand.InvokeAsync`. The message handler uses the aggregate handler
-  workflow (`[WriteAggregate]`) and calls a pure rule. It returns a `CommandOutcome` as the reply, and `SessionCommand`
-  turns the outcome into the HTTP answer. `SessionCommand.Decide` builds the reply, the events and the broadcast from
-  the rule's `Result`. A Command that starts a stream has no concurrency conflict. `CreateSessionHandler` uses the same
-  convention all the same, so that every Command has one shape. For a Command, this entry replaces "Reject in a
-  `Validate`, `Before` or `Load` method" from **Failure in a handler**.
+  a message (`RotateDriverBy` in `Driving/Rotate/`) and calls `SessionCommand.InvokeAsync` (`Shared/Commands/`). The
+  message handler uses the aggregate handler workflow (`[WriteAggregate]`) and calls a pure rule. It returns a
+  `CommandOutcome` as the reply, and `SessionCommand` turns the outcome into the HTTP answer. `SessionCommand.Decide`
+  builds the reply, the events and the broadcast from the rule's `Result`. A Command that starts a stream has no
+  concurrency conflict. `CreateSessionHandler` in `Sessions/Create/` uses the same convention all the same, so that
+  every Command has one shape. For a Command, this entry replaces "Reject in a `Validate`, `Before` or `Load` method"
+  from **Failure in a handler**.
 - **Bobcat and an invoked handler.** Bobcat counts the events of a message handler that an endpoint invokes as a
   cascade, so `ThenEvents` and `ThenNoEvents` do not see them. A spec of such a Command checks the stream with
   `ThenEventsOn<Session>(id, version, ...)`, as `DrivingASession` does. `ThenEventsOn` reads an archived stream as
   version 0. A spec of an archived stream therefore queries the events with `MaybeArchived()`, as `DeletingASession`
   does.
-- **Broadcast to all nodes.** `BroadcastToAllNodesAsync` has no cascading-message form. Return an `ISideEffect`
-  whose `ExecuteAsync(IMessageBus bus)` calls it, as `BroadcastSessionChanged` does. The endpoint stays a pure
-  function, and the outbox holds the broadcast until the transaction commits.
+- **Broadcast to all nodes.** `BroadcastToAllNodesAsync` has no cascading-message form. Return an `ISideEffect` whose
+  `ExecuteAsync(IMessageBus bus)` calls it, as `BroadcastSessionChanged` in `Shared/Push/` does. The endpoint stays a
+  pure function, and the outbox holds the broadcast until the transaction commits.
 - **Messages from a hub event.** A SignalR hub is not a Wolverine handler, so it has no return value for cascading
   messages. A hub override such as `OnDisconnectedAsync` sends its message through an injected `IMessageBus`, as
-  `TuigetherHub` does.
+  `TuigetherHub` in `Shared/Hubs/` does.
 - **Rejection of a SignalR connect.** Throw a `HubException` from `OnConnectedAsync`. SignalR sends its message to
   the client in the close message. An HTTP rejection of the connect reaches the .NET SignalR client only as a status
   code. This rule comes from ASP.NET Core SignalR, because a Wolverine hub derives from its `Hub`.
@@ -82,6 +83,61 @@ Known conflicts:
   is therefore a standalone public sealed record, not a union case. Marten stores the event class name in snake_case
   without the namespace (`OrderPlaced` becomes `order_placed`), so each event class name is unique in the solution. A
   renamed event class needs `Events.MapEventType<NewName>("old_name")`, or Marten cannot match the stored events to it.
+- **SignalR in a module.** `UseSignalR<THub>()` adds the SignalR services to `WolverineOptions.Services`.
+  `services.ConfigureWolverine(...)` runs when the container resolves `WolverineOptions`, after the container is built.
+  A call to `UseSignalR` there adds nothing, and the hub fails with "Unable to find the required services". So
+  `UseSignalR<TuigetherHub>().ProcessInline()` stays in `UseWolverine` in `Program.cs`.
+  `PublishMessage<T>().ToSignalR()` changes only the routing, so it works from a module.
+
+## Vertical slices
+
+The server project `server/Tuigether.Server` uses Vertical Slice Architecture. One folder holds one use case.
+
+Folder rules:
+
+- A feature folder (`Sessions/`, `Presence/`, `Driving/`) holds one subfolder per use case. A use case folder holds the
+  endpoint, the message, the handler and the pure rule of that use case: `Driving/Rotate/`. Nest deeper when a use case
+  has parts of its own.
+- Code that two or more slices use moves up to their lowest common folder. Use no partial classes to spread one type
+  over several slices.
+- A projection belongs to the slice that serves its read model, not to the features whose events it reads. The events
+  live in `Tuigether.Contracts`, so a projection depends on no other feature folder. A read model slice has the suffix
+  `View`: `Driving/TimerView/`.
+- `Domain/` at the project root holds the aggregate `Session` and the rules that two or more features call, such as
+  `SessionRules.CheckNotDeleted`. A rule that one use case calls stays in its slice.
+- `Shared/<slug>/` holds boilerplate. Each slug names one purpose: `Shared/Hubs/`, `Shared/Requests/`. A file that
+  belongs to no group lies loose in `Shared/`: `Result.cs`, `ServerOptions.cs`.
+- The namespace of each file matches its folder.
+- A folder name is never the name of a type that the code uses. The folder name becomes a namespace. Inside that
+  namespace and its parent, the name then refers to the namespace, and the type does not compile (CS0118). Example:
+  the folder `Sessions/CreateSession/` breaks every use of the Command `CreateSession` in `Tuigether.Server.Sessions`.
+  So use `Sessions/Create/`, `Driving/Rotate/`, `Shared/Hubs/` (SignalR has a type `Hub`).
+
+Module rules:
+
+- `Module.cs` registers the dependency injection and the library configuration of its folder. A folder gets a
+  `Module.cs` only when something needs to be registered.
+- A module sits in the folder closest to what it registers. A parent folder gets a `Module.cs` that calls the modules of
+  its subfolders. It also registers what belongs to the parent folder itself, as `Presence/Module.cs` does with the
+  durable queue of `CheckParticipantLeft`. `Program.cs` calls the top-level modules: `AddDomain()`, `AddSessions()`,
+  `AddPresence()`, `AddDriving()` and `AddShared()`.
+- The file is always `Module.cs`, and the class is always `public static class Module`. It holds one extension member
+  on `IServiceCollection` in an `extension` block, named after the folder path: `AddDrivingTimerView()`. Each folder
+  has its own namespace, so the `Module` classes do not collide. A caller uses the extension member, not the class
+  name.
+- A module adds Marten configuration with `services.ConfigureMarten(...)`, and Wolverine configuration with
+  `services.ConfigureWolverine(...)`. See **SignalR in a module** for the exception.
+- Each `...View/Module.cs` registers its projection with `ProjectionLifecycle.Inline` and routes its read model type to
+  SignalR.
+- The request pipeline is not dependency injection, so it gets no module. Each step is an extension member on
+  `WebApplication` in its `Shared/<slug>/` folder: `app.UseRequestCheck()`, `app.MapTuigetherHub()`. `Program.cs`
+  calls each step itself, in this order: request check, health checks, hub, endpoints. The request check must run
+  before the hub and the endpoints.
+- `Program.cs` keeps the host-wide settings: the options validation of `ServerOptions`, `TimeProvider`, the health
+  checks, the Marten connection, the schema name, the correlation id, `IntegrateWithWolverine`,
+  `UseLightweightSessions`, `AddWolverineHttp`, and in `UseWolverine` the service name, the assembly discovery,
+  `AutoApplyTransactions`, the durability mode, the polling interval, the `ConcurrencyException` retry and
+  `UseSignalR`.
 
 ## Specs
 
