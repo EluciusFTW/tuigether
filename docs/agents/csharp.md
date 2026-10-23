@@ -43,6 +43,12 @@ Known conflicts:
   `HandleAsync` method. It gets services as method parameters, not through a constructor. It publishes further
   messages as return values (cascading messages), not through `IMessageBus`. The handler is the shell, and a pure
   function makes the business decision.
+- **Broadcast to all nodes.** `BroadcastToAllNodesAsync` has no cascading-message form. Return an `ISideEffect`
+  whose `ExecuteAsync(IMessageBus bus)` calls it, as `BroadcastSessionChanged` does. The endpoint stays a pure
+  function, and the outbox holds the broadcast until the transaction commits.
+- **Rejection of a SignalR connect.** Throw a `HubException` from `OnConnectedAsync`. SignalR sends its message to
+  the client in the close message. An HTTP rejection of the connect reaches the .NET SignalR client only as a status
+  code. This rule comes from ASP.NET Core SignalR, because a Wolverine hub derives from its `Hub`.
 - **No layer over the libraries.** Use `IDocumentSession` and Wolverine's declarative loading (`[Entity]`,
   `[WriteAggregate]`) in the handler. A repository layer hides the features that Wolverine builds on.
 - **Stored types.** Marten stores documents, aggregates and events as JSON through System.Text.Json, its default since

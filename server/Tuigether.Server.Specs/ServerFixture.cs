@@ -1,6 +1,8 @@
 using Alba;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Testcontainers.PostgreSql;
+using Wolverine;
 
 namespace Tuigether.Server.Specs;
 
@@ -34,7 +36,17 @@ public sealed class ServerFixture : IAsyncLifetime
     public Task<IAlbaHost> StartNodeAsync() =>
         AlbaHost
             .For<Program>(static builder =>
-                builder.ConfigureServices(static services => services.AddSingleton<TimeProvider>(new FixedClock(Now))))
+                builder.ConfigureServices(static services =>
+                {
+                    services.AddSingleton<TimeProvider>(new FixedClock(Now));
+                    services.AddSingleton<NodeErrors>();
+                    services.AddSingleton<ILoggerProvider>(static provider => provider.GetRequiredService<NodeErrors>());
+
+                    // No tracked host receives a message to another node or to a SignalR client, so a tracked session
+                    // would wait for it until the timeout. A spec waits on the SignalR client instead.
+                    services.ConfigureWolverine(static options =>
+                        options.Tracking.IgnoreEnvelopes(static envelope => envelope.Destination?.Scheme is "dbcontrol" or "signalr"));
+                }))
             .WithConfiguration("ConnectionStrings:Postgres", _postgres.GetConnectionString())
             .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.ApiKey)}", ApiKey)
             .StartAsync();

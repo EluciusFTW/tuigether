@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using Tuigether.Contracts;
+using Tuigether.Server.Push;
 
 namespace Tuigether.Server.Requests;
 
@@ -15,12 +16,12 @@ public sealed class RequestCheckMiddleware(RequestDelegate next, IOptions<Server
             return next(context);
         }
 
-        var headers = new RequestHeaderValues(
-            context.Request.Headers[RequestHeaders.ApiKey].FirstOrDefault(),
-            context.Request.Headers[RequestHeaders.ProtocolVersion].FirstOrDefault(),
-            context.Request.Headers[RequestHeaders.UserName].FirstOrDefault());
+        var headers = RequestHeaderValues.Read(context.Request.Headers);
 
-        return RequestRules.Check(headers, options.Value.ApiKey).Match(_ => next(context), rejection => Reject(context, rejection));
+        // TuigetherHub checks the other headers of a connect, so that the client gets the reason.
+        return context.Request.Path.StartsWithSegments(HubProtocol.Path)
+            ? RequestRules.CheckApiKey(headers, options.Value.ApiKey).Match(_ => next(context), rejection => Reject(context, rejection))
+            : RequestRules.Check(headers, options.Value.ApiKey).Match(_ => next(context), rejection => Reject(context, rejection));
     }
 
     private static Task Reject(HttpContext context, RequestRejection rejection)

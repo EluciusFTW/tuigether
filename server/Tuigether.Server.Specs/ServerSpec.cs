@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Globalization;
 using Alba;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Tuigether.Server.Specs;
 
@@ -8,6 +10,14 @@ namespace Tuigether.Server.Specs;
 /// </summary>
 public abstract class ServerSpec(ServerFixture server) : WolverineHttpSpec(server.Host), IAsyncLifetime
 {
+    // A push to another node goes through the Wolverine control queue, which polls every 1 to 5 seconds.
+    private static readonly TimeSpan PushTimeout = TimeSpan.FromSeconds(20);
+
+    private readonly Stack<IAsyncDisposable> _owned = new();
+    private readonly List<IAlbaHost> _nodes = [server.Host];
+
+    protected ServerFixture Fixture { get; } = server;
+
     protected static string CurrentProtocol => Protocol.Version.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
@@ -23,7 +33,56 @@ public abstract class ServerSpec(ServerFixture server) : WolverineHttpSpec(serve
             scenario.WithRequestHeader(RequestHeaders.UserName, userName);
         };
 
-    public async ValueTask InitializeAsync() => await ResetAsync();
+    /// <summary>
+    /// Disposes <paramref name="resource"/> after the spec, in the reverse order of the calls.
+    /// </summary>
+    protected T Own<T>(T resource)
+        where T : IAsyncDisposable
+    {
+        _owned.Push(resource);
+        return resource;
+    }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    /// <summary>
+    /// Starts another node on the same database. The spec owns it.
+    /// </summary>
+    protected async Task<IAlbaHost> StartNodeAsync()
+    {
+        var node = Own(await Fixture.StartNodeAsync());
+        _nodes.Add(node);
+        return node;
+    }
+
+    /// <summary>
+    /// Waits until <paramref name="arrived"/> answers true. It stops at the first error that a node of the spec logs,
+    /// so a failed handler fails the spec at once and names the error.
+    /// </summary>
+    protected async Task ThenEventuallyPushed(Func<bool> arrived, string because)
+    {
+        var waited = Stopwatch.StartNew();
+        while (!arrived() && NodeErrorsSoFar().Count == 0 && waited.Elapsed < PushTimeout)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
+
+        var errors = NodeErrorsSoFar();
+        SpecAssert.Fact(arrived(), errors.Count > 0 ? $"{because}. A node logged: {string.Join(" | ", errors)}" : because);
+    }
+
+    private List<string> NodeErrorsSoFar() =>
+        _nodes.SelectMany(static node => node.Services.GetRequiredService<NodeErrors>().All).ToList();
+
+    public async ValueTask InitializeAsync()
+    {
+        Fixture.Host.Services.GetRequiredService<NodeErrors>().Clear();
+        await ResetAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        while (_owned.TryPop(out var resource))
+        {
+            await resource.DisposeAsync();
+        }
+    }
 }

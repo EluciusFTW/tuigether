@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
+using Tuigether.Server.Push;
 using Wolverine.Http;
 using Wolverine.Marten;
 
@@ -12,7 +13,7 @@ public static class CreateSessionEndpoint
         Problems.FromRule(SessionRules.CheckCreate(command));
 
     [WolverinePost("/api/sessions")]
-    public static (Created<CreateSessionResponse>, IStartStream) Post(
+    public static (Created<CreateSessionResponse>, IStartStream, BroadcastSessionChanged) Post(
         CreateSession command,
         [FromHeader(Name = RequestHeaders.UserName)] string userName,
         TimeProvider clock)
@@ -28,6 +29,7 @@ public static class CreateSessionEndpoint
 
         return (
             TypedResults.Created(default(string), new CreateSessionResponse(sessionId)),
-            MartenOps.StartStream<Session>(sessionId, created));
+            MartenOps.StartStream<Session>(sessionId, created),
+            new BroadcastSessionChanged(sessionId));
     }
 }

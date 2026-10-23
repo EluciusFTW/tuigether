@@ -1,6 +1,7 @@
 using JasperFx.Events;
 using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
+using Tuigether.Server.Push;
 using Wolverine.Http;
 using Wolverine.Marten;
 using Wolverine.Persistence;
@@ -16,10 +17,12 @@ public static class DeleteSessionEndpoint
     // The events stay in the database for statistics.
     [WolverinePost("/api/sessions/delete")]
     [EmptyResponse]
-    public static Events Post(
+    public static (Events, BroadcastSessionChanged) Post(
         DeleteSession command,
         [WriteAggregate(OnMissing = OnMissing.ProblemDetailsWith404)] Session session,
         [FromHeader(Name = RequestHeaders.UserName)] string userName,
         TimeProvider clock) =>
-        [new SessionDeleted(session.Id, userName, clock.GetUtcNow()), new Archived("Session deleted")];
+        (
+            [new SessionDeleted(session.Id, userName, clock.GetUtcNow()), new Archived("Session deleted")],
+            new BroadcastSessionChanged(session.Id));
 }

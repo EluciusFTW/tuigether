@@ -10,6 +10,7 @@
     <PackageReference Include="WolverineFx.Http" Version="$(WolverineVersion)" />
     <PackageReference Include="WolverineFx.Marten" Version="$(WolverineVersion)" />
     <PackageReference Include="WolverineFx.PostgreSQL" Version="$(WolverineVersion)" />
+    <PackageReference Include="WolverineFx.SignalR" Version="$(WolverineVersion)" />
     <!-- Wolverine 6 compiles its handler code at run time only with this package. -->
     <PackageReference Include="WolverineFx.RuntimeCompilation" Version="$(WolverineVersion)" />
   </ItemGroup>
