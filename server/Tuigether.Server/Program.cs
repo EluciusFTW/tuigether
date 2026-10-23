@@ -4,6 +4,7 @@ using Marten;
 using Microsoft.AspNetCore.SignalR;
 using Tuigether.Contracts;
 using Tuigether.Server;
+using Tuigether.Server.Driving;
 using Tuigether.Server.Presence;
 using Tuigether.Server.Push;
 using Tuigether.Server.Requests;
@@ -43,6 +44,8 @@ builder.Services
         options.Projections.Add<SessionSummaryProjection>(ProjectionLifecycle.Inline);
         options.Projections.Add<SessionDataProjection>(ProjectionLifecycle.Inline);
         options.Projections.Add<SessionParticipantsProjection>(ProjectionLifecycle.Inline);
+        options.Projections.Add<SessionTimerProjection>(ProjectionLifecycle.Inline);
+        options.Projections.Add<SessionDriveHistoryProjection>(ProjectionLifecycle.Inline);
     })
     .IntegrateWithWolverine()
     .UseLightweightSessions();
@@ -77,6 +80,8 @@ builder.Host.UseWolverine(static options =>
     options.PublishMessage<SessionRemoved>().ToSignalR();
     options.PublishMessage<SessionData>().ToSignalR();
     options.PublishMessage<SessionParticipants>().ToSignalR();
+    options.PublishMessage<SessionTimer>().ToSignalR();
+    options.PublishMessage<SessionDriveHistory>().ToSignalR();
 });
 
 builder.Services.AddWolverineHttp();

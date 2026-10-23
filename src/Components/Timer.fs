@@ -109,6 +109,7 @@ let toSnapshot (model: Model) : Backend.TimerSnapshot = {
   RemainingSeconds = int model.Remaining.TotalSeconds
   IsRunning = model.State = Running
   EndsAt = model.EndsAt |> Option.defaultValue 0L
+  IsPaused = model.State = Paused
 }
 
 let private driveCmd
@@ -330,6 +331,14 @@ let update (deps: Dependencies) msg model =
             EndsAt = None
             Remaining = TimeSpan.FromSeconds(float state.RemainingSeconds)
             TickEpoch = model.TickEpoch + 1
+      },
+      Cmd.none
+    | false, Idle when state.IsPaused ->
+      {
+        model with
+            State = Paused
+            EndsAt = None
+            Remaining = TimeSpan.FromSeconds(float state.RemainingSeconds)
       },
       Cmd.none
     | false, (Idle | Paused) ->

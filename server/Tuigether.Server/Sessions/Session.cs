@@ -15,6 +15,20 @@ public sealed record Session(Guid Id, bool IsDeleted)
     /// </summary>
     public ImmutableArray<string> Participants { get; init; } = [];
 
+    public string? Driver { get; init; }
+
+    public TimerPhase Timer { get; init; } = TimerPhase.Idle;
+
+    /// <summary>
+    /// When the running Drive ends. Null when no Drive runs.
+    /// </summary>
+    public DateTimeOffset? DriveEndsAt { get; init; }
+
+    /// <summary>
+    /// The time that the paused Drive has left.
+    /// </summary>
+    public TimeSpan DriveRemaining { get; init; }
+
     public static Session Create(SessionCreated created) => new(created.SessionId, IsDeleted: false);
 
     public static Session Apply(SessionDeleted _, Session session) => session with { IsDeleted = true };
@@ -28,4 +42,15 @@ public sealed record Session(Guid Id, bool IsDeleted)
 
     public static Session Apply(ParticipantLeft left, Session session) =>
         session with { Participants = session.Participants.Remove(left.User) };
+
+    public static Session Apply(DriverChanged changed, Session session) => session with { Driver = changed.Driver };
+
+    public static Session Apply(DriveStarted started, Session session) =>
+        session with { Timer = TimerPhase.DriveRunning, DriveEndsAt = started.EndsAt };
+
+    public static Session Apply(DrivePaused paused, Session session) =>
+        session with { Timer = TimerPhase.DrivePaused, DriveEndsAt = null, DriveRemaining = paused.Remaining };
+
+    public static Session Apply(DriveResumed resumed, Session session) =>
+        session with { Timer = TimerPhase.DriveRunning, DriveEndsAt = resumed.EndsAt };
 }

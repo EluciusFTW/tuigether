@@ -37,6 +37,7 @@ let private toSnapshot (state: Session.TimerState) : Backend.TimerSnapshot = {
   RemainingSeconds = state.RemainingSeconds
   IsRunning = state.IsRunning
   EndsAt = state.EndsAt
+  IsPaused = false
 }
 
 let private saveTimer (client: FirebaseClient) (sessionId: string) (snapshot: Backend.TimerSnapshot) =

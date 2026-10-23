@@ -24,6 +24,8 @@ type TimerSnapshot = {
   IsRunning: bool
   // Unix ms when the running Drive ends. 0 when no Drive runs.
   EndsAt: int64
+  // A backend that cannot tell a paused Drive from an idle timer sends false.
+  IsPaused: bool
 }
 
 type ConnectionState =

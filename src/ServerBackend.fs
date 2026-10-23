@@ -2,6 +2,7 @@ module ServerBackend
 
 open System
 open System.Collections.Concurrent
+open System.Collections.Generic
 open System.Net
 open System.Net.Http
 open System.Net.Http.Json
@@ -344,6 +345,7 @@ let private toData
   (repository: string)
   (branch: string)
   (createdAt: DateTimeOffset)
+  (driver: string)
   : Session.Data =
   {
     Title = title
@@ -351,7 +353,7 @@ let private toData
     StartedAt = createdAt.ToUnixTimeMilliseconds()
     WorkStartedAt = 0L
     Creator = createdBy
-    ActiveDriver = null
+    ActiveDriver = driver
     Status = Session.Status.toString (toStatus status)
     GoalLockOwner = null
     GoalLockedAt = 0L
@@ -361,11 +363,58 @@ let private toData
     LastWipPushBy = null
   }
 
+// The Session list shows no Driver.
 let private summaryData (summary: SessionSummary) =
-  toData summary.Title summary.Status summary.CreatedBy summary.Repository summary.Branch summary.CreatedAt
+  toData summary.Title summary.Status summary.CreatedBy summary.Repository summary.Branch summary.CreatedAt null
 
 let private sessionData (data: SessionData) =
-  toData data.Title data.Status data.CreatedBy data.Repository data.Branch data.CreatedAt
+  toData data.Title data.Status data.CreatedBy data.Repository data.Branch data.CreatedAt data.Driver
+
+// An idle timer has no state to adopt, so the timer component keeps its own idle display.
+let private timerSnapshot (timer: SessionTimer) : Backend.TimerSnapshot option =
+  match timer.Phase with
+  | TimerPhase.DriveRunning ->
+    Some {
+      RemainingSeconds = int timer.Remaining.TotalSeconds
+      IsRunning = true
+      IsPaused = false
+      EndsAt =
+        timer.EndsAt
+        |> Option.ofNullable
+        |> Option.map _.ToUnixTimeMilliseconds()
+        |> Option.defaultValue 0L
+    }
+  | TimerPhase.DrivePaused ->
+    Some {
+      RemainingSeconds = int timer.Remaining.TotalSeconds
+      IsRunning = false
+      IsPaused = true
+      EndsAt = 0L
+    }
+  | _ -> None
+
+let private historyType (kind: DriveHistoryKind) =
+  match kind with
+  | DriveHistoryKind.Paused -> Session.DriveEventType.Paused
+  | DriveHistoryKind.Resumed -> Session.DriveEventType.Resumed
+  | DriveHistoryKind.Switched -> Session.DriveEventType.Switched
+  | DriveHistoryKind.Started
+  | _ -> Session.DriveEventType.Started
+
+// The keys sort in time order, as the seam requires.
+let private driveHistory (history: SessionDriveHistory) =
+  let entries = Dictionary<string, Session.DriveEvent>()
+
+  history.Entries
+  |> Seq.iteri (fun index entry ->
+    entries[sprintf "%08d" index] <- {
+      Session.DriveEvent.Type = Session.DriveEventType.toString (historyType entry.Kind)
+      Session.DriveEvent.Driver = entry.Driver
+      Session.DriveEvent.By = entry.User
+      Session.DriveEvent.At = entry.At.ToUnixTimeMilliseconds()
+    })
+
+  entries
 
 let private sessionEvent (typeName: string, data: JsonElement) : Backend.SessionEvent option =
   match typeName with
@@ -464,6 +513,14 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
   let post route command read =
     post http notify route command read
 
+  // A Command on a Session whose id the server did not create is a bug of the caller, so it only goes to the log.
+  let postOnSession (sessionId: string) (command: Guid -> 'command) (route: string) =
+    match Guid.TryParse sessionId with
+    | true, id -> post route (command id) (fun _ -> nothing) |> Async.Ignore
+    | false, _ ->
+      Log.line (sprintf "%s is not a Session id of the server." sessionId)
+      nothing
+
   // The Session that this Client has open, with the avatar of the User. A new connection opens it again.
   let openSession = ref None
 
@@ -552,16 +609,33 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
       }
     Driving =
       { new Backend.IDriving with
-          member _.Subscription _sessionId = []
+          member _.Subscription sessionId = [
+            [ "server-timer"; sessionId ],
+            fun dispatch -> onSnapshotOf<SessionTimer> hub sessionId _.Id (timerSnapshot >> dispatch)
+          ]
 
-          member _.RotateDriver _sessionId _by _currentDriver _endsCurrentDrive _nextDriver _proposed =
-            nothing
+          // The server takes the user from the request headers, and it ends a running or paused Drive itself. The
+          // proposed timer gives only the Drive duration: the server sets the end from its own clock.
+          member _.RotateDriver sessionId _by currentDriver _endsCurrentDrive nextDriver proposed =
+            match nextDriver with
+            | Some next ->
+              postOnSession
+                sessionId
+                (fun id ->
+                  RotateDriver(
+                    id,
+                    Option.toObj currentDriver,
+                    next,
+                    TimeSpan.FromSeconds(float proposed.RemainingSeconds)
+                  ))
+                CommandRoutes.RotateDriver
+            | None -> nothing
 
-          member _.PauseDrive _sessionId _by _driver _proposed =
-            nothing
+          member _.PauseDrive sessionId _by _driver _proposed =
+            postOnSession sessionId PauseDrive CommandRoutes.PauseDrive
 
-          member _.ResumeDrive _sessionId _by _driver _proposed =
-            nothing
+          member _.ResumeDrive sessionId _by _driver _proposed =
+            postOnSession sessionId ResumeDrive CommandRoutes.ResumeDrive
 
           member _.SkipDrive _sessionId _by _driver _proposed =
             nothing
@@ -578,12 +652,16 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
           member _.SkipBreak _sessionId _proposed =
             nothing
 
+          // The server pauses the Drive and clears the Driver when the Driver leaves.
           member _.ClearDriver _sessionId =
             nothing
       }
     DriveHistory =
       { new Backend.IDriveHistory with
-          member _.Subscription _sessionId = []
+          member _.Subscription sessionId = [
+            [ "server-drive-history"; sessionId ],
+            fun dispatch -> onSnapshotOf<SessionDriveHistory> hub sessionId _.Id (driveHistory >> Some >> dispatch)
+          ]
       }
     Notes =
       { new Backend.INotes with

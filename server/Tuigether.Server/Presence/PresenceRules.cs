@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Tuigether.Contracts;
+using Tuigether.Server.Driving;
 using Tuigether.Server.Sessions;
 
 namespace Tuigether.Server.Presence;
@@ -29,8 +30,9 @@ public static class PresenceRules
         {
             { IsDeleted: true } => [],
             _ when hasOpenClient || !session.Participants.Contains(user) => [],
-            { Status: SessionStatus.Started, Participants.Length: 1 } =>
-                [new ParticipantLeft(session.Id, user, now), new SessionFinished(session.Id, user, now)],
-            _ => [new ParticipantLeft(session.Id, user, now)],
+            _ => [new ParticipantLeft(session.Id, user, now), .. DrivingRules.Leave(session, user, now), .. Finish(session, user, now)],
         };
+
+    private static ImmutableArray<object> Finish(Session session, string user, DateTimeOffset now) =>
+        session is { Status: SessionStatus.Started, Participants.Length: 1 } ? [new SessionFinished(session.Id, user, now)] : [];
 }

@@ -19,6 +19,7 @@
     <PackageReference Include="WolverineFx.Bobcat" Version="[$(WolverineBobcatVersion)]" />
     <PackageReference Include="WolverineFx.Bobcat.Http" Version="[$(WolverineBobcatVersion)]" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.13" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.16.0" />
   </ItemGroup>
 

@@ -46,7 +46,8 @@ public sealed record SessionData(
     string CreatedBy,
     string Repository,
     string Branch,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? Driver);
 
 public sealed record Participant(string User, string Avatar);
 
@@ -62,4 +63,49 @@ public sealed record SessionParticipants(Guid Id)
         other is not null && Id == other.Id && Participants.SequenceEqual(other.Participants);
 
     public override int GetHashCode() => HashCode.Combine(Id, Participants.Length);
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<TimerPhase>))]
+public enum TimerPhase
+{
+    Idle,
+    DriveRunning,
+    DrivePaused,
+}
+
+/// <summary>
+/// The timer of one Session.
+/// </summary>
+/// <param name="Driver">A paused Drive can have no Driver.</param>
+/// <param name="EndsAt">The time on the server clock when the running Drive ends. Null when no Drive runs.</param>
+/// <param name="Remaining">The time that the Drive has left: at <see cref="EndsAt"/> minus the time of the start or
+/// the resume while the Drive runs, and the frozen value while it is paused. Zero when the timer is idle.</param>
+public sealed record SessionTimer(Guid Id, TimerPhase Phase, string? Driver, DateTimeOffset? EndsAt, TimeSpan Remaining);
+
+[JsonConverter(typeof(JsonStringEnumConverter<DriveHistoryKind>))]
+public enum DriveHistoryKind
+{
+    Started,
+    Paused,
+    Resumed,
+    Switched,
+}
+
+/// <param name="Driver">The Driver of the Drive that the entry belongs to.</param>
+/// <param name="User">The Participant who caused the entry.</param>
+public sealed record DriveHistoryEntry(DriveHistoryKind Kind, string Driver, string User, DateTimeOffset At);
+
+/// <summary>
+/// Every Drive of one Session, in time order. A Drive starts with a <see cref="DriveHistoryKind.Started"/> entry, and
+/// the next entry that is not a pause or a resume ends it.
+/// </summary>
+public sealed record SessionDriveHistory(Guid Id)
+{
+    public ImmutableArray<DriveHistoryEntry> Entries { get; init; } = [];
+
+    // Record equality compares an ImmutableArray by reference.
+    public bool Equals(SessionDriveHistory? other) =>
+        other is not null && Id == other.Id && Entries.SequenceEqual(other.Entries);
+
+    public override int GetHashCode() => HashCode.Combine(Id, Entries.Length);
 }

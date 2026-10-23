@@ -19,3 +19,20 @@ public sealed record SessionFinished(Guid SessionId, string User, DateTimeOffset
 public sealed record ParticipantJoined(Guid SessionId, string User, string Avatar, DateTimeOffset At);
 
 public sealed record ParticipantLeft(Guid SessionId, string User, DateTimeOffset At);
+
+/// <param name="Driver">The new Driver, or null when the Session has no Driver.</param>
+public sealed record DriverChanged(Guid SessionId, string? Driver, string User, DateTimeOffset At);
+
+/// <param name="EndsAt">The time on the server clock when the Drive ends.</param>
+public sealed record DriveStarted(Guid SessionId, string Driver, DateTimeOffset EndsAt, string User, DateTimeOffset At);
+
+/// <param name="Remaining">The time that the Drive has left.</param>
+public sealed record DrivePaused(Guid SessionId, TimeSpan Remaining, string User, DateTimeOffset At);
+
+/// <param name="EndsAt">The time on the server clock when the Drive ends.</param>
+public sealed record DriveResumed(Guid SessionId, DateTimeOffset EndsAt, string User, DateTimeOffset At);
+
+/// <summary>
+/// A rotation ended the running or paused Drive before its end.
+/// </summary>
+public sealed record DriveSwitched(Guid SessionId, string User, DateTimeOffset At);

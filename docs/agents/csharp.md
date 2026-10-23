@@ -43,6 +43,17 @@ Known conflicts:
   `HandleAsync` method. It gets services as method parameters, not through a constructor. It publishes further
   messages as return values (cascading messages), not through `IMessageBus`. The handler is the shell, and a pure
   function makes the business decision.
+- **Command on an existing Session (mediator style).** A Wolverine retry policy applies to a message handler, also
+  inline through `IMessageBus.InvokeAsync`, but not to an HTTP endpoint. A Command on an existing Session must run
+  again against the new state after a concurrency conflict. So its endpoint stays thin: it wraps the Command and the
+  user name into a message (`RotateDriverBy`) and calls `SessionCommand.InvokeAsync`. The message handler uses the
+  aggregate handler workflow (`[WriteAggregate]`) and calls a pure rule. It returns a `CommandOutcome` as the reply,
+  and `SessionCommand` turns the outcome into the HTTP answer. `SessionCommand.Decide` builds the reply, the events
+  and the broadcast from the rule's `Result`. For these Commands, this entry replaces "Reject in a `Validate`, `Before`
+  or `Load` method" from **Failure in a handler**.
+- **Bobcat and an invoked handler.** Bobcat counts the events of a message handler that an endpoint invokes as a
+  cascade, so `ThenEvents` and `ThenNoEvents` do not see them. A spec of such a Command checks the stream with
+  `ThenEventsOn<Session>(id, version, ...)`, as `DrivingASession` does.
 - **Broadcast to all nodes.** `BroadcastToAllNodesAsync` has no cascading-message form. Return an `ISideEffect`
   whose `ExecuteAsync(IMessageBus bus)` calls it, as `BroadcastSessionChanged` does. The endpoint stays a pure
   function, and the outbox holds the broadcast until the transaction commits.
@@ -68,6 +79,11 @@ Known conflicts:
   is therefore a standalone public sealed record, not a union case. Marten stores the event class name in snake_case
   without the namespace (`OrderPlaced` becomes `order_placed`), so each event class name is unique in the solution. A
   renamed event class needs `Events.MapEventType<NewName>("old_name")`, or Marten cannot match the stored events to it.
+
+## Specs
+
+- When no Bobcat step covers a value, assert it with Shouldly. Bobcat shows a Shouldly failure as an expected/actual
+  cell, with no registration.
 
 ## Functional core, imperative shell
 

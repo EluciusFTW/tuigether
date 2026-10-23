@@ -8,25 +8,34 @@ namespace Tuigether.Server.Push;
 /// <summary>
 /// The snapshots that a Client with an open Session receives. Each area adds its snapshot here.
 /// </summary>
-public sealed record SessionSnapshots(SessionData? Data, SessionParticipants? Participants)
+public sealed record SessionSnapshots(
+    SessionParticipants? Participants,
+    SessionData? Data,
+    SessionTimer? Timer,
+    SessionDriveHistory? DriveHistory)
 {
     public static async Task<SessionSnapshots> LoadAsync(IQuerySession query, Guid sessionId, CancellationToken cancellation)
     {
         var batch = query.CreateBatchQuery();
-        var data = batch.Load<SessionData>(sessionId);
         var participants = batch.Load<SessionParticipants>(sessionId);
+        var data = batch.Load<SessionData>(sessionId);
+        var timer = batch.Load<SessionTimer>(sessionId);
+        var driveHistory = batch.Load<SessionDriveHistory>(sessionId);
         await batch.Execute(cancellation);
-        return new(await data, await participants);
+        return new(await participants, await data, await timer, await driveHistory);
     }
 
     /// <summary>
-    /// One SignalR message per snapshot that exists. A deleted Session has none.
+    /// One SignalR message per snapshot that exists. A deleted Session has none. The Participants come before the
+    /// Session data, because the Client shows the Driver only when the Driver is in its Participants.
     /// </summary>
     public IEnumerable<object> MessagesTo(WebSocketRouting.ILocator clients) =>
         new object?[]
         {
-            Data is null ? null : new SignalRMessage<SessionData>(Data, clients),
             Participants is null ? null : new SignalRMessage<SessionParticipants>(Participants, clients),
+            Data is null ? null : new SignalRMessage<SessionData>(Data, clients),
+            Timer is null ? null : new SignalRMessage<SessionTimer>(Timer, clients),
+            DriveHistory is null ? null : new SignalRMessage<SessionDriveHistory>(DriveHistory, clients),
         }.OfType<object>().ToList();
 }
 

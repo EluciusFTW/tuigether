@@ -216,7 +216,7 @@ public sealed class OpeningASession(ServerFixture server) : ServerSpec(server)
     private SessionFinished Finished(string user) => new(_sessionId, user, ServerFixture.Now);
 
     private SessionData Data(SessionStatus status) =>
-        new(_sessionId, "Mob on the timer", status, "ann", "tuigether", "main", ServerFixture.Now);
+        new(_sessionId, "Mob on the timer", status, "ann", "tuigether", "main", ServerFixture.Now, Driver: null);
 
     private SessionParticipants Participants(params Participant[] participants) =>
         new(_sessionId) { Participants = [.. participants] };

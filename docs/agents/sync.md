@@ -116,5 +116,12 @@ no-op.
 - The server appends the join, the leave, `SessionStarted` and `SessionFinished` itself. `Sessions.Start` is a no-op,
   and `Presence.Leave` writes nothing else. A User leaves after the grace period of the server (`LeaveGracePeriod`,
   default 10 seconds), when no other Client of the User has the Session open.
+- `Driving.RotateDriver`, `PauseDrive` and `ResumeDrive` send their Commands. The server sets `EndsAt` from its own
+  clock. The proposed timer gives only the Drive duration. `RotateDriver` carries the Driver that the Client shows, so
+  the server rejects the second of two rotations at the same moment.
+- When the Driver leaves, the server pauses a running Drive and clears the Driver. `Driving.ClearDriver` is a no-op.
+- The timer subscription sends no snapshot for an idle timer, so the timer component keeps its own idle display.
+- The Driver arrives in `SessionData`. The node sends the Participants before the Session data, because `Journey`
+  shows a Driver only when the Driver is in its Participants.
 - The backend keeps the last message of each type. A subscription that starts after a push gets that message at once.
 - An area that the server does not serve yet is a stub: its subscription sends nothing, and its intentions do nothing.
