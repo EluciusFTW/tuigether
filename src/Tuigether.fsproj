@@ -24,7 +24,9 @@
     <Compile Include="Git.fs" />
     <Compile Include="Session.fs" />
     <Compile Include="JourneyKeys.fs" />
+    <Compile Include="Backend.fs" />
     <Compile Include="Firebase.fs" />
+    <Compile Include="FirebaseBackend.fs" />
     <Compile Include="Dependencies.fs" />
     <Compile Include="Components/TextEditing.fs" />
     <Compile Include="Components/Log.fs" />
@@ -40,7 +42,6 @@
     <Compile Include="Components/SessionList.fs" />
     <Compile Include="Components/DriveLog.fs" />
     <Compile Include="Components/SessionView.fs" />
-    <Compile Include="SessionOrchestration.fs" />
     <Compile Include="AppLayout.fs" />
     <Compile Include="Application.fs" />
     <Compile Include="AppView.fs" />

@@ -3,7 +3,6 @@ module Journey
 open System
 open Dependencies
 open Elmish
-open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open SpectreTuff
@@ -41,6 +40,7 @@ type Model = {
   CurrentUser: User
   Timer: Timer.Model
   Persistence: Firebase.Persistence
+  Backend: Backend.Backend
 }
 
 type Msg =
@@ -94,7 +94,7 @@ let private removeUser (userName: string) (model: Model) : Model =
             | other -> other
     }
 
-let init (client: FirebaseClient) (sessionId: string) (currentUser: string) (avatarName: string) (data: Session.Data) =
+let init (deps: Dependencies) (sessionId: string) (currentUser: string) (avatarName: string) (data: Session.Data) =
   let me = {
     Name = currentUser
     Color = colorByName avatarName
@@ -111,11 +111,12 @@ let init (client: FirebaseClient) (sessionId: string) (currentUser: string) (ava
           Color = colorByName data.ActiveDriver
         }
     CurrentUser = me
-    Timer = Timer.init client sessionId currentUser
+    Timer = Timer.init deps.Client sessionId currentUser
     Persistence = {
-      Client = client
+      Client = deps.Client
       SessionId = sessionId
     }
+    Backend = deps.Backend
   }
 
 let private activeDriverCmd (model: Model) (driver: string option) : Cmd<Msg> =
@@ -219,10 +220,11 @@ let update (deps: Dependencies) msg model =
     { model with Timer = m }, Cmd.map TimerMsg cmd
 
 let subscriptions (model: Model) =
-  (Firebase.Users.subscription model.Persistence.Client model.Persistence.SessionId "journey" (fun ev ->
-    match ev with
-    | Firebase.UserChanged(user, presence) -> RemoteUserChanged(user, presence)
-    | Firebase.UserRemoved user -> RemoteUserRemoved user))
+  (model.Backend.Presence.Subscription model.Persistence.SessionId "journey"
+   |> Subs.map (fun ev ->
+     match ev with
+     | Backend.UserChanged(user, presence) -> RemoteUserChanged(user, presence)
+     | Backend.UserRemoved user -> RemoteUserRemoved user))
   @ (Timer.subscriptions model.Timer |> Subs.map TimerMsg)
 
 let keyMap (_model: Model) : Spectre.Tui.App.IKeyMap =

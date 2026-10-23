@@ -2,7 +2,6 @@ module SessionList
 
 open System
 open Elmish
-open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open SpectreTuff.Keymap
@@ -21,7 +20,7 @@ type Model = {
   SelectedIndex: int
   Status: string
   User: string
-  Client: FirebaseClient
+  Backend: Backend.Backend
   InputMode: InputMode
   ConnectedUsers: Map<string, Set<string>>
 }
@@ -35,19 +34,19 @@ type Msg =
   | ConfirmName
   | CancelNaming
   | DeleteSelected
-  | FirebaseEvent of Firebase.SessionEvent
+  | SessionsEvent of Backend.SessionEvent
   | CreateCompleted of Result<string, string>
   | DeleteCompleted of Result<unit, string>
 
 type OutMsg = OpenSession of sessionId: string * data: Session.Data
 
-let init (client: FirebaseClient) (user: string) () =
+let init (backend: Backend.Backend) (user: string) () =
   {
     Sessions = []
     SelectedIndex = 0
     Status = "loading…"
     User = user
-    Client = client
+    Backend = backend
     InputMode = Browsing
     ConnectedUsers = Map.empty
   },
@@ -115,7 +114,13 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
     match model.InputMode with
     | Naming(editor, _) ->
       TextEditing.apply action editor
-      { model with InputMode = Naming(editor, None) }, [], None
+
+      {
+        model with
+            InputMode = Naming(editor, None)
+      },
+      [],
+      None
     | Browsing -> model, [], None
   | ConfirmName ->
     match model.InputMode with
@@ -140,8 +145,7 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
       | _ ->
         { model with InputMode = Browsing },
         Cmd.OfAsync.perform
-          (fun () ->
-            Firebase.Sessions.create model.Client model.User trimmed (Git.readCurrentBranch ()) (Git.readRepoName ()))
+          (fun () -> model.Backend.Sessions.Create model.User trimmed (Git.readCurrentBranch ()) (Git.readRepoName ()))
           ()
           CreateCompleted,
         None
@@ -152,8 +156,8 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
     | true -> model, [], None
     | false ->
       let sessionId, _ = model.Sessions.[model.SelectedIndex]
-      model, Cmd.OfAsync.perform (fun () -> Firebase.Sessions.delete model.Client sessionId) () DeleteCompleted, None
-  | FirebaseEvent(Firebase.SessionsLoaded(sessions, connectedUsers)) ->
+      model, Cmd.OfAsync.perform (fun () -> model.Backend.Sessions.Delete sessionId) () DeleteCompleted, None
+  | SessionsEvent(Backend.SessionsLoaded(sessions, connectedUsers)) ->
     let sorted = sortSessions sessions
 
     {
@@ -165,7 +169,7 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
     },
     [],
     None
-  | FirebaseEvent(Firebase.SessionChanged(id, data)) when not (String.IsNullOrEmpty id) && not (isNull (data :> obj)) ->
+  | SessionsEvent(Backend.SessionChanged(id, data)) when not (String.IsNullOrEmpty id) && not (isNull (data :> obj)) ->
     let sessions =
       model.Sessions
       |> List.filter (fun (k, _) -> k <> id)
@@ -177,8 +181,8 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
     },
     [],
     None
-  | FirebaseEvent(Firebase.SessionChanged _) -> model, [], None
-  | FirebaseEvent(Firebase.SessionRemoved id) ->
+  | SessionsEvent(Backend.SessionChanged _) -> model, [], None
+  | SessionsEvent(Backend.SessionRemoved id) ->
     let remaining = model.Sessions |> List.filter (fun (k, _) -> k <> id)
 
     {
@@ -189,7 +193,7 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
     },
     [],
     None
-  | FirebaseEvent(Firebase.ConnectionError e) ->
+  | SessionsEvent(Backend.ConnectionError e) ->
     {
       model with
           Status = sprintf "error: %s" e
@@ -201,7 +205,7 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
 
 // One stream for the whole list: presence arrives with each sessions reload.
 let subscriptions (model: Model) =
-  Firebase.Sessions.subscription model.Client FirebaseEvent model
+  model.Backend.Sessions.Subscription |> Subs.map SessionsEvent
 
 let private browsingBindings: KeyBinding<Model, Msg> list = [
   KeyBinding.createSpecial ConsoleKey.UpArrow "up" Up

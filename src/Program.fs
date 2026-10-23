@@ -18,10 +18,14 @@ match Config.load () with
     | true -> Notification.send
     | false -> fun _ -> ()
 
-  let deps: Dependencies = { Client = client; Notify = notify }
+  let deps: Dependencies = {
+    Client = client
+    Backend = FirebaseBackend.create client
+    Notify = notify
+  }
 
   Elmish.Program.mkProgram
-    (Application.init client settings.TuigetherUser)
+    (Application.init deps settings.TuigetherUser)
     (Application.update deps settings.TuigetherUser)
     AppView.view
   |> Elmish.Program.withSubscription (fun model ->

@@ -3,7 +3,6 @@ module Application
 open System
 open Dependencies
 open Elmish
-open Firebase.Database
 open Spectre.Tui
 open Spectre.Tui.App
 open SpectreTuff
@@ -131,8 +130,8 @@ let buildPanels (model: Model) : Panel list =
 let private sweeperDeps = Tuisweeper.Dependencies.create Tuisweeper.Highscore.Store.defaultFile
 let private tileDeps = Tui48.Dependencies.create Tui48.Highscore.Store.defaultFile
 
-let init (client: FirebaseClient) (user: string) () =
-  let listModel, listCmd = SessionList.init client user ()
+let init (deps: Dependencies) (user: string) () =
+  let listModel, listCmd = SessionList.init deps.Backend user ()
 
   let avatarName = Journey.resolveName ()
   let sweeperModel, sweeperCmd = Tuisweeper.init sweeperDeps
@@ -159,7 +158,7 @@ let init (client: FirebaseClient) (user: string) () =
   ]
 
 let private handleSessionListOutMsg
-  (client: FirebaseClient)
+  (deps: Dependencies)
   (user: string)
   (avatarName: string)
   (model: Model)
@@ -167,7 +166,7 @@ let private handleSessionListOutMsg
   : Model * Cmd<Msg> =
   match out with
   | Some(SessionList.OpenSession(sessionId, sessionData)) ->
-    let viewModel, viewCmd = SessionView.init client user avatarName sessionId sessionData
+    let viewModel, viewCmd = SessionView.init deps user avatarName sessionId sessionData
 
     {
       model with
@@ -177,25 +176,23 @@ let private handleSessionListOutMsg
   | None -> model, []
 
 let private leaveFinalizeCmd
-  (client: FirebaseClient)
+  (backend: Backend.Backend)
   (sessionId: string)
   (user: string)
   (wasStarted: bool)
   (wasDriver: bool)
   : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> SessionOrchestration.leaveAndFinalize client sessionId user wasStarted wasDriver)
-    ()
-    (fun () -> LeaveFinalized)
+  Cmd.OfAsync.perform (fun () -> backend.Presence.Leave sessionId user wasStarted wasDriver) () (fun () ->
+    LeaveFinalized)
 
 let private handleSessionViewOutMsg
-  (client: FirebaseClient)
+  (backend: Backend.Backend)
   (model: Model)
   (out: SessionView.OutMsg option)
   : Model * Cmd<Msg> =
   match out with
   | Some(SessionView.LeaveSession(sessionId, user, wasStarted, wasDriver)) ->
-    { model with Page = SessionListPage }, leaveFinalizeCmd client sessionId user wasStarted wasDriver
+    { model with Page = SessionListPage }, leaveFinalizeCmd backend sessionId user wasStarted wasDriver
   | None -> model, []
 
 let update (deps: Dependencies) (user: string) msg model =
@@ -256,7 +253,7 @@ let update (deps: Dependencies) (user: string) msg model =
     let listModel, listCmd, outMsg = SessionList.update lMsg model.SessionList
 
     let modelAfterList = { model with SessionList = listModel }
-    let modelAfterOut, outCmd = handleSessionListOutMsg deps.Client user model.AvatarName modelAfterList outMsg
+    let modelAfterOut, outCmd = handleSessionListOutMsg deps user model.AvatarName modelAfterList outMsg
     modelAfterOut, Cmd.batch [ Cmd.map SessionListMsg listCmd; outCmd ]
 
   | SessionViewMsg vMsg ->
@@ -264,7 +261,7 @@ let update (deps: Dependencies) (user: string) msg model =
     | SessionViewPage viewModel ->
       let m, sessionCmd, outMsg = SessionView.update deps vMsg viewModel
       let modelAfterView = { model with Page = SessionViewPage m }
-      let modelAfterOut, outCmd = handleSessionViewOutMsg deps.Client modelAfterView outMsg
+      let modelAfterOut, outCmd = handleSessionViewOutMsg deps.Backend modelAfterView outMsg
       modelAfterOut, Cmd.batch [ Cmd.map SessionViewMsg sessionCmd; outCmd ]
     | _ -> model, []
 
