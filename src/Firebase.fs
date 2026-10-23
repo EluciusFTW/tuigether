@@ -5,6 +5,7 @@ open System.Threading.Tasks
 open Firebase.Database
 open Firebase.Database.Query
 open Firebase.Database.Streaming
+open Newtonsoft.Json.Linq
 
 type Config = { Url: string; Secret: string }
 
@@ -17,7 +18,9 @@ type Persistence = {
 
 // Events emitted by the global sessions-list stream (used by SessionList).
 type SessionEvent =
-  | SessionsLoaded of (string * Session.Data) list
+  // Connected users per session id ride along with the sessions snapshot, so the
+  // list needs no per-session presence stream.
+  | SessionsLoaded of sessions: (string * Session.Data) list * connectedUsers: Map<string, Set<string>>
   | SessionChanged of string * Session.Data
   | SessionRemoved of string
   | ConnectionError of string
@@ -131,14 +134,29 @@ module Sessions =
   let private sessionNode (client: FirebaseClient) (sessionId: string) =
     client.Child(sessionsPath).Child(sessionId)
 
+  // The user names under a session's widgetState/connectedUsers (see Users).
+  let private connectedUsersOf (session: JObject) =
+    match session.SelectToken "widgetState.connectedUsers" with
+    | :? JObject as users -> users.Properties() |> Seq.map (fun p -> p.Name) |> Set.ofSeq
+    | _ -> Set.empty
+
   // Load the full sessions list. Like Session.loadData, this re-reads the whole
   // payload so the reload-on-change subscription always sees a consistent snapshot.
-  let loadAll (client: FirebaseClient) : Async<(string * Session.Data) list option> =
+  // The payload already contains every session's presence, so it is read from the
+  // same snapshot: each presence stream would pin a thread-pool thread (the
+  // library reads its streams with a blocking ReadLine).
+  let loadAll (client: FirebaseClient) : Async<((string * Session.Data) list * Map<string, Set<string>>) option> =
     async {
       try
-        let! sessions = client.Child(sessionsPath).OnceAsync<Session.Data>() |> Async.AwaitTask
+        let! sessions = client.Child(sessionsPath).OnceAsync<JObject>() |> Async.AwaitTask
+        let sessions = sessions |> Seq.filter (fun o -> not (isNull o.Object)) |> Seq.toList
 
-        return sessions |> Seq.map (fun o -> o.Key, o.Object) |> Seq.toList |> Some
+        let data = sessions |> List.map (fun o -> o.Key, o.Object.ToObject<Session.Data>())
+
+        let connectedUsers =
+          sessions |> List.map (fun o -> o.Key, connectedUsersOf o.Object) |> Map.ofList
+
+        return Some(data, connectedUsers)
       with _ ->
         return None
     }
@@ -155,7 +173,7 @@ module Sessions =
         (client.Child(sessionsPath))
         (fun () -> loadAll client)
         (function
-        | Some sessions -> dispatch (wrap (SessionsLoaded sessions))
+        | Some(sessions, connectedUsers) -> dispatch (wrap (SessionsLoaded(sessions, connectedUsers)))
         | None -> ())
         (fun e -> dispatch (wrap (ConnectionError e)))
   ]
@@ -302,7 +320,7 @@ module Users =
 
   // `subscriberTag` distinguishes subscribers of the same session's connectedUsers
   // path. Elmish keys subscriptions by their key list and keeps the first-registered
-  // start function for a given key, so two consumers (e.g. SessionList and Journey)
+  // start function for a given key, so two consumers (e.g. two components)
   // sharing one key would silently route all events to whichever registered first.
   let subscription (client: FirebaseClient) (sessionId: string) (subscriberTag: string) (wrap: UserEvent -> 'appMsg) = [
     [ "connected-users"; subscriberTag; sessionId ],

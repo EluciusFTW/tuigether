@@ -36,8 +36,6 @@ type Msg =
   | CancelNaming
   | DeleteSelected
   | FirebaseEvent of Firebase.SessionEvent
-  | ConnectedUserChanged of sessionId: string * user: string
-  | ConnectedUserRemoved of sessionId: string * user: string
   | CreateCompleted of Result<string, string>
   | DeleteCompleted of Result<unit, string>
 
@@ -155,16 +153,15 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
     | false ->
       let sessionId, _ = model.Sessions.[model.SelectedIndex]
       model, Cmd.OfAsync.perform (fun () -> Firebase.Sessions.delete model.Client sessionId) () DeleteCompleted, None
-  | FirebaseEvent(Firebase.SessionsLoaded sessions) ->
+  | FirebaseEvent(Firebase.SessionsLoaded(sessions, connectedUsers)) ->
     let sorted = sortSessions sessions
-    let liveIds = sorted |> List.map fst |> Set.ofList
 
     {
       model with
           Sessions = sorted
           SelectedIndex = clampIndex sorted model.SelectedIndex
           Status = "connected"
-          ConnectedUsers = model.ConnectedUsers |> Map.filter (fun id _ -> Set.contains id liveIds)
+          ConnectedUsers = connectedUsers
     },
     [],
     None
@@ -199,39 +196,12 @@ let update msg model : Model * Cmd<Msg> * OutMsg option =
     },
     [],
     None
-  | ConnectedUserChanged(sessionId, user) ->
-    let existing = model.ConnectedUsers |> Map.tryFind sessionId |> Option.defaultValue Set.empty
-
-    {
-      model with
-          ConnectedUsers = model.ConnectedUsers |> Map.add sessionId (Set.add user existing)
-    },
-    [],
-    None
-  | ConnectedUserRemoved(sessionId, user) ->
-    let existing = model.ConnectedUsers |> Map.tryFind sessionId |> Option.defaultValue Set.empty
-
-    {
-      model with
-          ConnectedUsers = model.ConnectedUsers |> Map.add sessionId (Set.remove user existing)
-    },
-    [],
-    None
   | CreateCompleted _ -> model, [], None
   | DeleteCompleted _ -> model, [], None
 
+// One stream for the whole list: presence arrives with each sessions reload.
 let subscriptions (model: Model) =
-  let sessionsSub = Firebase.Sessions.subscription model.Client FirebaseEvent model
-
-  let perSessionSubs =
-    model.Sessions
-    |> List.collect (fun (sessionId, _) ->
-      Firebase.Users.subscription model.Client sessionId "list" (fun ev ->
-        match ev with
-        | Firebase.UserChanged(user, _) -> ConnectedUserChanged(sessionId, user)
-        | Firebase.UserRemoved user -> ConnectedUserRemoved(sessionId, user)))
-
-  sessionsSub @ perSessionSubs
+  Firebase.Sessions.subscription model.Client FirebaseEvent model
 
 let private browsingBindings: KeyBinding<Model, Msg> list = [
   KeyBinding.createSpecial ConsoleKey.UpArrow "up" Up
