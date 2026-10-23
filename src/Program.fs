@@ -7,20 +7,17 @@ match Config.load () with
   eprintfn "%s" message
   exit 1
 | Ok settings ->
-  let client =
-    Firebase.createClient {
-      Url = settings.FirebaseUrl
-      Secret = settings.FirebaseSecret
-    }
-
   let notify =
     match settings.NotificationsEnabled with
     | true -> Notification.send
     | false -> fun _ -> ()
 
   let deps: Dependencies = {
-    Client = client
-    Backend = FirebaseBackend.create client
+    Backend =
+      FirebaseBackend.create {
+        Url = settings.FirebaseUrl
+        Secret = settings.FirebaseSecret
+      }
     Notify = notify
   }
 

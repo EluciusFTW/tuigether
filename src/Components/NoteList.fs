@@ -2,7 +2,6 @@ module NoteList
 
 open System
 open Elmish
-open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open SpectreTuff.Keymap
@@ -26,7 +25,8 @@ type Model = {
   InputMode: InputMode
   Items: Item list
   SelectedIndex: int
-  Persistence: Firebase.Persistence
+  Backend: Backend.Backend
+  SessionId: string
 }
 
 type Msg =
@@ -109,27 +109,23 @@ let keyMap (model: Model) =
 
   KeyBinding.toKeyMap bindings model
 
-let init (client: FirebaseClient) (sessionId: string) = {
+let init (backend: Backend.Backend) (sessionId: string) = {
   InputMode = Normal
   Items = []
   SelectedIndex = 0
-  Persistence = {
-    Client = client
-    SessionId = sessionId
-  }
+  Backend = backend
+  SessionId = sessionId
 }
 
 let private addItemCmd (model: Model) (item: Item) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> Firebase.NoteList.addItem model.Persistence.Client model.Persistence.SessionId item.Id item.Text)
-    ()
-    (fun () -> StateSaved)
+  Cmd.OfAsync.perform (fun () -> model.Backend.NoteList.Add model.SessionId item.Id item.Text) () (fun () -> StateSaved)
+
+let private changeItemCmd (model: Model) (item: Item) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.NoteList.Change model.SessionId item.Id item.Text) () (fun () ->
+    StateSaved)
 
 let private deleteItemCmd (model: Model) (itemId: string) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> Firebase.NoteList.deleteItem model.Persistence.Client model.Persistence.SessionId itemId)
-    ()
-    (fun () -> StateSaved)
+  Cmd.OfAsync.perform (fun () -> model.Backend.NoteList.Remove model.SessionId itemId) () (fun () -> StateSaved)
 
 let update msg model =
   match msg with
@@ -199,7 +195,7 @@ let update msg model =
 
       // Push IDs are chronologically sortable, so new items always append.
       let newItem = {
-        Id = Firebase.PushId.generate ()
+        Id = PushId.generate ()
         Text = newText
       }
 
@@ -238,7 +234,7 @@ let update msg model =
 
         // The item can vanish mid-edit if another user deletes it; skip the write.
         match newItems |> List.tryFind (fun it -> it.Id = id) with
-        | Some edited -> updated, addItemCmd updated edited
+        | Some edited -> updated, changeItemCmd updated edited
         | None -> updated, []
     | _ -> model, []
   | Delete ->
@@ -294,7 +290,8 @@ let update msg model =
   | StateSaved -> model, []
 
 let subscriptions (model: Model) =
-  Firebase.NoteList.subscription model.Persistence.Client model.Persistence.SessionId RemoteStateLoaded
+  model.Backend.NoteList.Subscription model.SessionId
+  |> Subs.map RemoteStateLoaded
 
 // List items render green, matching the Todo widget. The selected row inverts
 // to black-on-green instead of the default list item's yellow-on-blue. Items

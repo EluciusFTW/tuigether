@@ -2,7 +2,6 @@ module SessionInfo
 
 open System
 open Elmish
-open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open SpectreTuff.Keymap
@@ -92,7 +91,7 @@ type InputMode =
   | SwitchPopup of SwitchPopupStage
 
 type Model = {
-  Client: FirebaseClient
+  Backend: Backend.Backend
   SessionId: string
   User: string
   StartedAt: int64
@@ -191,8 +190,8 @@ let private lockFromData (data: Session.Data) =
       LockedAt = data.GoalLockedAt
     }
 
-let init (client: FirebaseClient) (sessionId: string) (user: string) (sessionData: Session.Data) = {
-  Client = client
+let init (backend: Backend.Backend) (sessionId: string) (user: string) (sessionData: Session.Data) = {
+  Backend = backend
   SessionId = sessionId
   User = user
   StartedAt = sessionData.StartedAt
@@ -402,16 +401,16 @@ let keyMap (model: Model) =
 
   KeyBinding.toKeyMap bindings model
 
-let private saveGoalCmd (model: Model) : Cmd<Msg> =
+let private saveGoalDraftCmd (model: Model) : Cmd<Msg> =
   Cmd.OfAsync.perform
-    (fun () -> Firebase.Sessions.saveGoal model.Client model.SessionId model.GoalContent)
+    (fun () -> model.Backend.Goal.SaveDraft model.SessionId model.GoalContent model.Lock)
     ()
     (fun () -> StateSaved)
 
 // Debounce goal writes: each typed character bumps a token and schedules a
 // MaybeSaveGoal for that token after a short idle delay. The actual save only
 // fires if the token still matches the latest one — so a burst of fast
-// keystrokes collapses into a single Firebase write at the end.
+// keystrokes collapses into a single write at the end.
 let private scheduleGoalSave (token: int) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> async { do! Async.Sleep goalDebounceMs }) () (fun () -> MaybeSaveGoal token)
 
@@ -421,18 +420,11 @@ let private scheduleGoalSave (token: int) : Cmd<Msg> =
 let private scheduleAutoExit (token: int) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> async { do! Async.Sleep autoExitInsertMs }) () (fun () -> MaybeAutoExitInsert token)
 
-let private saveGoalLockCmd (model: Model) : Cmd<Msg> =
-  match model.Lock with
-  | Some lock ->
-    Cmd.OfAsync.perform
-      (fun () -> Firebase.Sessions.saveGoalLock model.Client model.SessionId lock.Owner lock.LockedAt)
-      ()
-      (fun () -> StateSaved)
-  | None -> []
+let private acquireGoalLockCmd (model: Model) (lock: Locking.Lock) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Goal.AcquireEditLock model.SessionId lock) () (fun () -> StateSaved)
 
-let private releaseGoalLockCmd (model: Model) : Cmd<Msg> =
-  Cmd.OfAsync.perform (fun () -> Firebase.Sessions.releaseGoalLock model.Client model.SessionId) () (fun () ->
-    StateSaved)
+let private endGoalEditCmd (model: Model) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Goal.EndEdit model.SessionId model.GoalContent) () (fun () -> StateSaved)
 
 // Where a new branch can grow out of: the branch checked out now, the repo's default
 // branch, and the newest release branches. Duplicates of the current branch are left
@@ -496,15 +488,12 @@ let private resetToUpstreamCmd () : Cmd<Msg> =
 let private wipSyncCmd (title: string) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> Git.wipSync title) () WipSyncCompleted
 
-let private saveWipPushCmd (model: Model) (timestamp: int64) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> Firebase.Sessions.saveWipPush model.Client model.SessionId model.User timestamp)
-    ()
-    (fun () -> StateSaved)
-
-let private saveGitBranchCmd (model: Model) (branch: string) : Cmd<Msg> =
-  Cmd.OfAsync.perform (fun () -> Firebase.Sessions.saveGitBranch model.Client model.SessionId branch) () (fun () ->
+let private recordWipPushCmd (model: Model) (timestamp: int64) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Git.RecordWipPush model.SessionId model.User timestamp) () (fun () ->
     StateSaved)
+
+let private changeBranchCmd (model: Model) (branch: string) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Git.ChangeBranch model.SessionId branch) () (fun () -> StateSaved)
 
 let private listBranchesCmd () : Cmd<Msg> =
   Cmd.OfAsync.perform Git.listBranches () BranchesLoaded
@@ -606,7 +595,7 @@ let update msg model =
             Editor = Some editor
       }
 
-      updated, Cmd.batch [ saveGoalLockCmd updated; scheduleAutoExit activityToken ]
+      updated, Cmd.batch [ acquireGoalLockCmd updated lock; scheduleAutoExit activityToken ]
   | ExitInsert ->
     match model.InputMode with
     | Insert ->
@@ -628,7 +617,7 @@ let update msg model =
             Lock = None
       }
 
-      updated, Cmd.batch [ saveGoalCmd updated; releaseGoalLockCmd updated ]
+      updated, endGoalEditCmd updated
     | _ -> model, []
   | Edit action ->
     match model.Editor with
@@ -668,7 +657,7 @@ let update msg model =
         | other -> other
 
       let updated = { model with Lock = refreshedLock }
-      updated, Cmd.batch [ saveGoalCmd updated; saveGoalLockCmd updated ]
+      updated, saveGoalDraftCmd updated
     | false -> model, []
   | MaybeAutoExitInsert token ->
     match model.InputMode = Insert && token = model.InsertActivityToken with
@@ -870,7 +859,7 @@ let update msg model =
           LocalGitBranch = Git.readCurrentBranch ()
     }
 
-    updated, saveGitBranchCmd updated name
+    updated, changeBranchCmd updated name
   | BranchCreateCompleted(_, Error err) ->
     // Keep the popup's parts as they are — a retry has to rebuild the same name.
     let inputMode =
@@ -1010,7 +999,7 @@ let update msg model =
 
     // The checkout succeeded either way, so the session branch moves even when
     // there are notes to show.
-    updated, saveGitBranchCmd updated name
+    updated, changeBranchCmd updated name
   | DismissSwitchPopup ->
     match model.InputMode with
     | SwitchPopup _ -> { model with InputMode = Normal }, []
@@ -1091,7 +1080,7 @@ let update msg model =
           LastSeenWipAt = timestamp
     }
 
-    updated, saveWipPushCmd updated timestamp
+    updated, recordWipPushCmd updated timestamp
   | WipSyncCompleted(Error err) ->
     {
       model with
@@ -1127,7 +1116,7 @@ let update msg model =
             Editor = Some editor
       }
 
-      updated, saveGoalLockCmd updated
+      updated, acquireGoalLockCmd updated lock
     | _ -> model, []
   | CloseGoalPopup ->
     match model.InputMode with
@@ -1148,7 +1137,7 @@ let update msg model =
             Lock = None
       }
 
-      updated, Cmd.batch [ saveGoalCmd updated; releaseGoalLockCmd updated ]
+      updated, endGoalEditCmd updated
     | _ -> model, []
 
 let subscriptions (_model: Model) = []

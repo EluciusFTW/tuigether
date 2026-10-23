@@ -10,14 +10,16 @@ A component is one F# module in `src/Components/`. Copy `TodoList.fs` for the st
 `Msg`, the input members (`handleKey`, `handlePaste`, `capturesInput`, `keyMap`), `init`, `update`,
 `subscriptions`, `widget`. Copy `SessionList.handleKey` for the key handling (see [Keys](#keys)).
 
-- `init` returns only the `Model`. The component's Firebase subscription does the first load, and its result
-  arrives as `RemoteStateLoaded`. The Session list, the Session data and the presence use the backend seam for
-  their subscriptions and writes instead: see [Backend seam](sync.md#backend-seam).
+- `init` takes the backend from `Dependencies.Backend` and returns only the `Model`. The component's subscription on
+  the backend seam does the first load, and its result arrives as `RemoteStateLoaded`. See
+  [Backend seam](sync.md#backend-seam).
 - `update` returns `Model * Cmd<Msg>`. A component that must tell its parent something returns
   `Model * Cmd<Msg> * OutMsg option` instead, as `SessionList` (`OpenSession`) and `SessionView` (`LeaveSession`)
   do. The parent matches the `OutMsg`.
-- A write is a `Cmd.OfAsync.perform` that calls a `Firebase.<Area>` function and returns `StateSaved`. Remote
-  changes come back through the subscription, so `StateSaved` changes nothing.
+- A write is a `Cmd.OfAsync.perform` that calls one intention of the component's seam group, for example
+  `model.Backend.Todo.Add`, and returns `StateSaved`. Remote changes come back through the subscription, so
+  `StateSaved` changes nothing. The component computes the values that the intention proposes, for example the new
+  item id from `PushId.generate`.
 - An editing `InputMode` case carries a live `TextBoxWidget`. `TextEditing.apply` mutates it in place, so the model
   keeps the same instance. Read the text back from the widget on confirm. `TextEditing.isMutation` tells you if an
   action needs a save.

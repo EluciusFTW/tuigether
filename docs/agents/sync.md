@@ -8,7 +8,7 @@ This doc tells you how tuigether clients share state through Firebase, and why t
 - `Firebase.fs` owns every database path, read, write and subscription, in one submodule per area (`Sessions`,
   `Users`, `Notes`, `NoteList`, `Todo`, `Timer`, `History`). No other file builds a query.
 - `Backend.fs` is the seam between the components and a sync backend. `FirebaseBackend.fs` implements it with
-  `Firebase.fs`. See [Backend seam](#backend-seam).
+  `Firebase.fs`, and it is the only file that calls `Firebase.fs`. See [Backend seam](#backend-seam).
 - `Session.fs` holds the wire records.
 - Timestamps are Unix milliseconds from `Clock.nowMs ()`.
 
@@ -45,8 +45,8 @@ has clients on different versions, and every record must stay readable in both d
   state. A function returns `Result` only when its caller acts on the failure: `Sessions.create`, `Sessions.delete`,
   `Users.join`, `Users.leave`.
 - On quit, the app exits only after `Presence.Leave` completes, so the leave writes finish first.
-- List and todo items use keys from `Firebase.PushId.generate`. The keys sort by creation time, and concurrent
-  clients do not collide. `TodoList` reorders items by swapping content between two fixed keys.
+- List and todo items use keys from `PushId.generate`. The keys sort by creation time, and concurrent clients do not
+  collide. `TodoList` reorders items by swapping content between two fixed keys.
 
 ## Locks and the timer
 
@@ -60,11 +60,11 @@ has clients on different versions, and every record must stay readable in both d
 `Backend.fs` is the seam between the components and a sync backend. `Dependencies.Backend` carries it.
 
 - Each group of the seam covers one area. Each function is one user intention. No function names a database path.
-- Two areas use the seam. `Sessions` holds the Session list, create, delete, start and the Session data. `Presence`
-  holds join, leave and the presence of the Users. All other areas call `Firebase.fs` directly through
-  `Dependencies.Client` and `Firebase.Persistence`.
-- A subscription returns a `Sub` of the area's event. The consumer maps it to its own message with `Subs.map`.
-  `Presence.Subscription` takes a subscriber tag, so each consumer keeps its own subscription key.
+- The groups are `Sessions`, `Presence`, `Driving`, `DriveHistory`, `Notes`, `Goal`, `Todo`, `NoteList` and `Git`.
+- A subscription returns a `Sub` of the area's snapshot or event. The consumer maps it to its own message with
+  `Subs.map`. `Presence.Subscription` takes a subscriber tag, so each consumer keeps its own subscription key.
+- The Client proposes values: the item id, the timer state (`TimerSnapshot`) and the Edit lock. A backend that owns
+  the rule can ignore the proposal.
 - `SessionView` calls `Sessions.Start` after a successful `Presence.Join` when it sees a Created Session.
   `Presence.Leave` also pauses the Drive when the Driver leaves, and sets a Started Session to Finished when the
   last Participant leaves. The Firebase backend runs these steps in the Client. Each step writes from a value that
@@ -78,3 +78,19 @@ shape. `Journey` keeps the Participants in the order of the events, and it rotat
 A backend that receives one Participants snapshot per change converts it inside its own subscription. It diffs each
 snapshot against the previous one. It dispatches `UserChanged` for each new or changed User, in snapshot order, and
 `UserRemoved` for each missing User. The components therefore stay the same for each backend.
+
+### Intentions that a server can own
+
+Some intentions have an effect that a server backend decides itself. Each of them is its own seam function, so that a
+server backend can make it a no-op: `Driving.EndDrive`, `Driving.RecordFinishedDrive`, `Driving.EndBreak` and
+`Driving.ClearDriver`. `Backend.fs` describes when a Client sends each one.
+
+The Firebase backend writes each of them. Last write wins, the Break runs on each Client only, and the Edit lock
+expires by the time limit in `Locking.fs`.
+
+### Edit lock and live typing
+
+`Notes` and `Goal` share `IEditing`. `AcquireEditLock` sends the proposed lock when Insert mode starts. `SaveDraft`
+is the debounced save while the User types, and it refreshes the lock. `EndEdit` sends the final text when Insert mode
+ends, by Esc or by the idle auto-exit, and it releases the lock. A backend without live typing makes `SaveDraft` a
+no-op.

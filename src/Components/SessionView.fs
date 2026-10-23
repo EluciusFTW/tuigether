@@ -45,8 +45,6 @@ type Msg =
 type OutMsg = LeaveSession of sessionId: string * user: string * wasStarted: bool * wasDriver: bool
 
 let init (deps: Dependencies) (user: string) (avatarName: string) (sessionId: string) (sessionData: Session.Data) =
-  let client = deps.Client
-
   let model = {
     Backend = deps.Backend
     SessionId = sessionId
@@ -55,12 +53,12 @@ let init (deps: Dependencies) (user: string) (avatarName: string) (sessionId: st
     AvatarName = avatarName
     Status = "joining…"
     Focus = 1
-    Notes = Notes.init client sessionId user
-    NoteList = NoteList.init client sessionId
-    TodoList = TodoList.init client sessionId
-    SessionInfo = SessionInfo.init client sessionId user sessionData
+    Notes = Notes.init deps.Backend sessionId user
+    NoteList = NoteList.init deps.Backend sessionId
+    TodoList = TodoList.init deps.Backend sessionId
+    SessionInfo = SessionInfo.init deps.Backend sessionId user sessionData
     Journey = Journey.init deps sessionId user avatarName sessionData
-    DriveLog = DriveLog.init client sessionId
+    DriveLog = DriveLog.init deps.Backend sessionId
     ShowDriveLog = false
   }
 
@@ -84,7 +82,7 @@ let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
 
     let clearDriverCmd =
       match model.Journey.ActiveDriver with
-      | Some driver when driver.Name = model.User -> Cmd.ofMsg (JourneyMsg(Journey.SetActiveDriver None))
+      | Some driver when driver.Name = model.User -> Cmd.ofMsg (JourneyMsg Journey.ClearDriver)
       | _ -> Cmd.none
 
     let exitNotesInsertCmd =
@@ -222,7 +220,7 @@ let private journeyKeyToMsg (model: Model) (gMsg: JourneyKeys.Msg) : Msg =
     // Stop pauses the drive (keeps remaining time); `s` again resumes it.
     match model.Journey.Timer.State with
     | Timer.Running -> JourneyMsg(Journey.TimerMsg Timer.Pause)
-    | Timer.Paused -> JourneyMsg(Journey.TimerMsg Timer.Start)
+    | Timer.Paused -> JourneyMsg(Journey.TimerMsg Timer.Resume)
     | _ -> JourneyMsg Journey.SwitchDriver
   | JourneyKeys.FastForward -> JourneyMsg(Journey.TimerMsg Timer.SkipTimer)
   | JourneyKeys.NextDrive -> JourneyMsg Journey.SwitchDriver

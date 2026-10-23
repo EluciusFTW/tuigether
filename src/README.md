@@ -143,13 +143,13 @@ KeyPressed 's'
 InputMsg(KeyPressed 's')
     │  dispatch to the session view
     ▼  SessionView.handleKey → JourneyKeys.handleKey
-SessionViewMsg(JourneyMsg(TimerMsg Start))
+SessionViewMsg(JourneyMsg(TimerMsg Resume))
     │
     ▼  SessionView.update → Journey.update → Timer.update
-TimerMsg Start
+TimerMsg Resume
     │
     ▼  Timer.update
-  Model { state = Running }  +  Cmd (write state to Firebase)
+  Model { state = Running }  +  Cmd (Backend.Driving.ResumeDrive)
                                       │
                                       ▼ (async resolves)
                                  TimerMsg StateSaved

@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <Compile Include="Clock.fs" />
+    <Compile Include="PushId.fs" />
     <Compile Include="Str.fs" />
     <Compile Include="Clipboard.fs" />
     <Compile Include="Locking.fs" />
