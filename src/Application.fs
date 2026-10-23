@@ -11,6 +11,12 @@ open SpectreTuff.Elmish
 open SpectreTuff.Layout
 open SpectreTuff.Widgets
 open Tuisweeper
+open Tui48
+
+/// The games that can be opened on top of the app; at most one at a time.
+type Ingame =
+  | SweeperGame
+  | TileGame
 
 type Page =
   | SessionListPage
@@ -26,7 +32,8 @@ type Model = {
   LogModel: Log.Model
   ShowKeymap: bool
   Sweeper: Tuisweeper.Model
-  ShowSweeper: bool
+  Tile: Tui48.Model
+  OpenGame: Ingame option
   Exiting: bool
 }
 
@@ -37,8 +44,9 @@ type Msg =
   | LeaveFinalized
   | ToggleLog
   | ToggleKeymap
-  | ToggleSweeper
+  | ToggleGame of Ingame
   | SweeperMsg of Tuisweeper.Msg
+  | TileMsg of Tui48.Msg
   | Tick
   | Exit
 
@@ -60,7 +68,8 @@ type Panel = {
 let private globalBindings: Keymap.KeyBinding<unit, Msg> list = [
   Keymap.KeyBinding.create 'q' "quit" Exit
   Keymap.KeyBinding.create 'l' "toggle log" ToggleLog
-  Keymap.KeyBinding.create 't' "tuisweeper" ToggleSweeper
+  Keymap.KeyBinding.create 't' "tuisweeper" (ToggleGame SweeperGame)
+  Keymap.KeyBinding.create 'g' "tui48" (ToggleGame TileGame)
   Keymap.KeyBinding.dynamic (Keymap.CharKey '?') (fun _ -> {
     Description = "keymaps"
     Message =
@@ -118,13 +127,16 @@ let buildPanels (model: Model) : Panel list =
       }
     ]
 
-let private sweeperDeps = Tuisweeper.Dependencies.create Highscore.Store.defaultFile
+// Both game packages have a Highscore module, so these stay qualified.
+let private sweeperDeps = Tuisweeper.Dependencies.create Tuisweeper.Highscore.Store.defaultFile
+let private tileDeps = Tui48.Dependencies.create Tui48.Highscore.Store.defaultFile
 
 let init (client: FirebaseClient) (user: string) () =
   let listModel, listCmd = SessionList.init client user ()
 
   let avatarName = Journey.resolveName ()
   let sweeperModel, sweeperCmd = Tuisweeper.init sweeperDeps
+  let tileModel, tileCmd = Tui48.init tileDeps
 
   {
     Page = SessionListPage
@@ -136,10 +148,15 @@ let init (client: FirebaseClient) (user: string) () =
     LogModel = Log.init ()
     ShowKeymap = false
     Sweeper = sweeperModel
-    ShowSweeper = false
+    Tile = tileModel
+    OpenGame = None
     Exiting = false
   },
-  Cmd.batch [ Cmd.map SessionListMsg listCmd; Cmd.map SweeperMsg sweeperCmd ]
+  Cmd.batch [
+    Cmd.map SessionListMsg listCmd
+    Cmd.map SweeperMsg sweeperCmd
+    Cmd.map TileMsg tileCmd
+  ]
 
 let private handleSessionListOutMsg
   (client: FirebaseClient)
@@ -184,19 +201,23 @@ let private handleSessionViewOutMsg
 let update (deps: Dependencies) (user: string) msg model =
   match msg with
   | InputMsg key ->
-    match model.ShowSweeper, model.ShowKeymap with
-    // While the game is open it owns the keyboard (it closes itself on q/Esc); 't' toggles it from outside.
-    | true, _ ->
+    match model.OpenGame, model.ShowKeymap with
+    // While a game is open it owns the keyboard (it closes itself on q/Esc); its own key toggles it from outside.
+    | Some SweeperGame, _ ->
       match key.KeyChar with
-      | 't' -> model, Cmd.ofMsg ToggleSweeper
+      | 't' -> model, Cmd.ofMsg (ToggleGame SweeperGame)
       | _ -> model, Cmd.ofMsg (SweeperMsg(Tuisweeper.InputMsg key))
-    | false, true ->
+    | Some TileGame, _ ->
+      match key.KeyChar with
+      | 'g' -> model, Cmd.ofMsg (ToggleGame TileGame)
+      | _ -> model, Cmd.ofMsg (TileMsg(Tui48.InputMsg key))
+    | None, true ->
       match key.Key, key.KeyChar with
       | ConsoleKey.Escape, _
       | _, '?'
       | _, 'q' -> model, Cmd.ofMsg ToggleKeymap
       | _ -> model, []
-    | false, false ->
+    | None, false ->
 
       let panels = buildPanels model
       let focusedPanel = panels |> List.tryFind (fun p -> p.Number = model.Focus)
@@ -266,12 +287,13 @@ let update (deps: Dependencies) (user: string) msg model =
     },
     []
 
-  | ToggleSweeper ->
-    {
-      model with
-          ShowSweeper = not model.ShowSweeper
-    },
-    []
+  | ToggleGame game ->
+    let openGame =
+      match model.OpenGame with
+      | Some current when current = game -> None
+      | _ -> Some game
+
+    { model with OpenGame = openGame }, []
 
   | SweeperMsg sMsg ->
     let sweeperModel, sweeperCmd, outMsg = Tuisweeper.update sweeperDeps sMsg model.Sweeper
@@ -279,8 +301,18 @@ let update (deps: Dependencies) (user: string) msg model =
     let sweeperCmd = Cmd.map SweeperMsg sweeperCmd
 
     match outMsg with
-    | Some Tuisweeper.Closed -> { model with ShowSweeper = false }, sweeperCmd
+    | Some Tuisweeper.Closed -> { model with OpenGame = None }, sweeperCmd
     | None -> model, sweeperCmd
+
+  | TileMsg tMsg ->
+    // Keep the cmd along with Closed: it saves the highscore of the game in progress.
+    let tileModel, tileCmd, outMsg = Tui48.update tileDeps tMsg model.Tile
+    let model = { model with Tile = tileModel }
+    let tileCmd = Cmd.map TileMsg tileCmd
+
+    match outMsg with
+    | Some Tui48.Closed -> { model with OpenGame = None }, tileCmd
+    | None -> model, tileCmd
 
   | Tick -> model, []
 
@@ -295,13 +327,14 @@ let subscriptions (model: Model) =
     | SessionListPage -> SessionList.subscriptions model.SessionList |> Subs.map SessionListMsg
     | SessionViewPage vm -> SessionView.subscriptions vm |> Subs.map SessionViewMsg
 
-  // Elmish's Sub.map prefixes the ids: tuisweeper's generic "tick" id must not clash with ours.
-  let sweeperSubs =
-    match model.ShowSweeper with
-    | true -> Tuisweeper.subscriptions model.Sweeper |> Sub.map "tuisweeper" SweeperMsg
-    | false -> []
+  // Elmish's Sub.map prefixes the ids: the games' generic ids (e.g. "tick") must not clash with ours.
+  let gameSubs =
+    match model.OpenGame with
+    | Some SweeperGame -> Tuisweeper.subscriptions model.Sweeper |> Sub.map "tuisweeper" SweeperMsg
+    | Some TileGame -> Tui48.subscriptions model.Tile |> Sub.map "tui48" TileMsg
+    | None -> []
 
-  pageSubs @ sweeperSubs
+  pageSubs @ gameSubs
 
 let traceToLog msg (model: Model) _ =
   match msg with

@@ -4,6 +4,7 @@ open Spectre.Tui
 open Spectre.Tui.App
 open SpectreTuff.Widgets
 open Tuisweeper
+open Tui48
 open Application
 
 type AppView(model: Model) =
@@ -57,9 +58,10 @@ type AppView(model: Model) =
         | true -> ctx.Render(KeymapModal.widget (keymapSections model))
         | false -> ()
 
-      match model.ShowSweeper with
-      | true -> ctx.Render(Tuisweeper.view model.Sweeper ignore)
-      | false -> ()
+      match model.OpenGame with
+      | Some SweeperGame -> ctx.Render(Tuisweeper.view model.Sweeper ignore)
+      | Some TileGame -> ctx.Render(Tui48.view model.Tile ignore)
+      | None -> ()
 
 let view (model: Model) _dispatch =
   AppView model
