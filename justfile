@@ -101,6 +101,13 @@ firebase: build
 log client:
     tail -f logs/{{ client }}/tuigether-$(date +%F).log
 
+# Mutation run of the server specs with Stryker.NET. Needs Docker. Extra arguments go to Stryker, e.g. --mutate "**/DrivingRules.cs".
+[positional-arguments]
+[working-directory('server/Tuigether.Server.Specs')]
+mutate *args:
+    dotnet tool restore
+    dotnet stryker "$@"
+
 _client node user key:
     TUIGETHER_BACKEND=server \
     TUIGETHER_SERVER_URL=http://localhost:{{ if node == "a" { "5101" } else { "5102" } }} \
