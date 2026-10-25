@@ -17,7 +17,7 @@ type InputMode =
   // text; on confirm the text is read back and written to that item.
   | EditingItem of id: string * editor: TextBoxWidget
 
-// Items carry their Firebase push-ID so deletes target a stable key and
+// Items carry their push-ID so deletes target a stable key and
 // concurrent multi-user edits do not collide.
 type Item = { Id: string; Text: string }
 
@@ -25,6 +25,8 @@ type Model = {
   InputMode: InputMode
   Items: Item list
   SelectedIndex: int
+  // The id of an added item that the next snapshot can bring, see `Backend.FromSnapshots`.
+  SelectWhenShown: string option
   Backend: Backend.Backend
   SessionId: string
 }
@@ -40,7 +42,7 @@ type Msg =
   | ConfirmEdit
   | Delete
   | Copy
-  | RemoteStateLoaded of Session.ListState option
+  | RemoteStateLoaded of (string * string) list option
   | StateSaved
 
 let private normalBindings: KeyBinding<Model, Msg> list = [
@@ -113,6 +115,7 @@ let init (backend: Backend.Backend) (sessionId: string) = {
   InputMode = Normal
   Items = []
   SelectedIndex = 0
+  SelectWhenShown = None
   Backend = backend
   SessionId = sessionId
 }
@@ -126,6 +129,17 @@ let private changeItemCmd (model: Model) (item: Item) : Cmd<Msg> =
 
 let private deleteItemCmd (model: Model) (itemId: string) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> model.Backend.NoteList.Remove model.SessionId itemId) () (fun () -> StateSaved)
+
+// `changed` is the model with the effect of a write. A backend that changes the model only from snapshots keeps the
+// items and the selection until the snapshot arrives.
+let private afterWrite (model: Model) (changed: Model) =
+  match model.Backend.NoteList.ModelChange with
+  | Backend.Optimistic -> changed
+  | Backend.FromSnapshots -> {
+      model with
+          InputMode = changed.InputMode
+          SelectWhenShown = changed.SelectWhenShown
+    }
 
 let update msg model =
   match msg with
@@ -205,10 +219,11 @@ let update msg model =
         model with
             Items = newItems
             SelectedIndex = newItems.Length - 1
+            SelectWhenShown = Some newItem.Id
             InputMode = Normal
       }
 
-      updated, addItemCmd updated newItem
+      afterWrite model updated, addItemCmd updated newItem
     | _ -> model, []
   | CancelAdd -> { model with InputMode = Normal }, []
   | ConfirmEdit ->
@@ -234,7 +249,7 @@ let update msg model =
 
         // The item can vanish mid-edit if another user deletes it; skip the write.
         match newItems |> List.tryFind (fun it -> it.Id = id) with
-        | Some edited -> updated, changeItemCmd updated edited
+        | Some edited -> afterWrite model updated, changeItemCmd updated edited
         | None -> updated, []
     | _ -> model, []
   | Delete ->
@@ -255,7 +270,7 @@ let update msg model =
             SelectedIndex = newIndex
       }
 
-      updated, deleteItemCmd updated removed.Id
+      afterWrite model updated, deleteItemCmd updated removed.Id
   | Copy ->
     match model.Items with
     | [] -> ()
@@ -266,24 +281,28 @@ let update msg model =
 
     model, []
   | RemoteStateLoaded(Some state) ->
-    let items =
-      match isNull state.Items with
-      | true -> []
-      | false ->
-        state.Items
-        |> Seq.sortBy (fun kvp -> kvp.Key)
-        |> Seq.map (fun kvp -> { Id = kvp.Key; Text = kvp.Value })
-        |> Seq.toList
+    let items = state |> List.map (fun (id, text) -> { Id = id; Text = text })
 
-    let selectedIndex =
-      match items with
-      | [] -> 0
-      | _ -> model.SelectedIndex |> max 0 |> min (items.Length - 1)
+    let indexOf id =
+      items |> List.tryFindIndex (fun item -> item.Id = id)
+
+    let selectedId = model.Items |> List.tryItem model.SelectedIndex |> Option.map _.Id
+
+    // The selection follows its item, so an item that another user removes above it does not move the selection.
+    let selectedIndex, selectWhenShown =
+      match model.SelectWhenShown |> Option.bind indexOf, selectedId |> Option.bind indexOf with
+      | Some index, _ -> index, None
+      | None, Some index -> index, model.SelectWhenShown
+      | None, None ->
+        match items with
+        | [] -> 0, model.SelectWhenShown
+        | _ -> model.SelectedIndex |> max 0 |> min (items.Length - 1), model.SelectWhenShown
 
     {
       model with
           Items = items
           SelectedIndex = selectedIndex
+          SelectWhenShown = selectWhenShown
     },
     []
   | RemoteStateLoaded None -> model, []

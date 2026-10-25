@@ -421,6 +421,9 @@ let private todoItems (todos: SessionTodos) =
     })
   |> List.ofSeq
 
+let private noteListItems (noteList: SessionNoteList) =
+  noteList.Items |> Seq.map (fun item -> item.Id, item.Text) |> List.ofSeq
+
 let private historyType (kind: DriveHistoryKind) =
   match kind with
   | DriveHistoryKind.Paused -> Session.DriveEventType.Paused
@@ -775,16 +778,21 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
       }
     NoteList =
       { new Backend.INoteList with
-          member _.Subscription _sessionId = []
+          member _.ModelChange = Backend.FromSnapshots
 
-          member _.Add _sessionId _itemId _text =
-            nothing
+          member _.Subscription sessionId = [
+            [ "server-note-list"; sessionId ],
+            fun dispatch -> onSnapshotOf<SessionNoteList> hub sessionId _.Id (noteListItems >> Some >> dispatch)
+          ]
 
-          member _.Change _sessionId _itemId _text =
-            nothing
+          member _.Add sessionId itemId text =
+            postOnSession sessionId (fun id -> AddNote(id, itemId, text)) CommandRoutes.AddNote
 
-          member _.Remove _sessionId _itemId =
-            nothing
+          member _.Change sessionId itemId text =
+            postOnSession sessionId (fun id -> ChangeNote(id, itemId, text)) CommandRoutes.ChangeNote
+
+          member _.Remove sessionId itemId =
+            postOnSession sessionId (fun id -> RemoveNote(id, itemId)) CommandRoutes.RemoveNote
       }
     Git =
       { new Backend.IGit with

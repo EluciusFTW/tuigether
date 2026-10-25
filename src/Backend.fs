@@ -150,7 +150,9 @@ type ITodo =
   abstract Remove: sessionId: string -> itemId: string -> Async<unit>
 
 type INoteList =
-  abstract Subscription: sessionId: string -> Sub<Session.ListState option>
+  abstract ModelChange: ModelChange
+  // The items as id and text, in display order.
+  abstract Subscription: sessionId: string -> Sub<(string * string) list option>
   abstract Add: sessionId: string -> itemId: string -> text: string -> Async<unit>
   abstract Change: sessionId: string -> itemId: string -> text: string -> Async<unit>
   abstract Remove: sessionId: string -> itemId: string -> Async<unit>

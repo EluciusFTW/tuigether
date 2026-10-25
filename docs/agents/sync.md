@@ -47,8 +47,8 @@ has clients on different versions, and every record must stay readable in both d
   `Users.join`, `Users.leave`.
 - On quit, the app exits only after `Presence.Leave` completes, so the leave writes finish first.
 - List and todo items use keys from `PushId.generate`. The keys sort by creation time, and concurrent clients do not
-  collide. The Firebase backend sends the todo items in key order. `TodoList` reorders items by swapping content
-  between two fixed keys.
+  collide. The Firebase backend sends the todo items and the note-list items in key order. `TodoList` reorders items
+  by swapping content between two fixed keys.
 
 ## Locks and the timer
 
@@ -149,4 +149,7 @@ no-op.
   item id that the Client proposes. The snapshot `SessionTodos` holds the items in the order of the server.
   `Todo.ModelChange` is `FromSnapshots`, so `TodoList` shows a change only when the snapshot arrives. The selection
   follows its item from snapshot to snapshot.
+- The NoteList group sends `AddNote`, `ChangeNote` and `RemoveNote` with the item id that the Client proposes. The
+  snapshot `SessionNoteList` holds the items in the order of the server. `NoteList.ModelChange` is `FromSnapshots`, as
+  for the Todo group.
 - An area that the server does not serve yet is a stub: its subscription sends nothing, and its intentions do nothing.

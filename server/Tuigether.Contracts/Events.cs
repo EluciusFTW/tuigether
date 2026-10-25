@@ -100,3 +100,9 @@ public sealed record TodoReopened(Guid SessionId, string TodoId, string User, Da
 public sealed record TodoMoved(Guid SessionId, string TodoId, int NewPosition, string User, DateTimeOffset At);
 
 public sealed record TodoRemoved(Guid SessionId, string TodoId, string User, DateTimeOffset At);
+
+public sealed record NoteAdded(Guid SessionId, string NoteId, string Text, string User, DateTimeOffset At);
+
+public sealed record NoteChanged(Guid SessionId, string NoteId, string Text, string User, DateTimeOffset At);
+
+public sealed record NoteRemoved(Guid SessionId, string NoteId, string User, DateTimeOffset At);

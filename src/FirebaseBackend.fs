@@ -98,11 +98,11 @@ let private saveTodoItem (client: FirebaseClient) (sessionId: string) (itemId: s
   Firebase.Todo.setItem client sessionId itemId item.Text item.Completed
 
 // The push-ID keys sort by creation time, and `TodoList` reorders items by swapping content between two keys.
-let private todoItems (state: Session.TodoState) =
-  match isNull state.Items with
+let private itemsByKey (items: System.Collections.Generic.Dictionary<string, 'item>) =
+  match isNull items with
   | true -> []
   | false ->
-    state.Items
+    items
     |> Seq.sortBy _.Key
     |> Seq.map (fun item -> item.Key, item.Value)
     |> List.ofSeq
@@ -252,7 +252,7 @@ let create (config: Firebase.Config) : Backend.Backend =
           member _.ModelChange = Backend.Optimistic
 
           member _.Subscription sessionId =
-            Firebase.Todo.subscription client sessionId (Option.map todoItems)
+            Firebase.Todo.subscription client sessionId (Option.map (fun state -> itemsByKey state.Items))
 
           member _.Add sessionId itemId text =
             Firebase.Todo.addItem client sessionId itemId text
@@ -279,8 +279,10 @@ let create (config: Firebase.Config) : Backend.Backend =
       }
     NoteList =
       { new Backend.INoteList with
+          member _.ModelChange = Backend.Optimistic
+
           member _.Subscription sessionId =
-            Firebase.NoteList.subscription client sessionId id
+            Firebase.NoteList.subscription client sessionId (Option.map (fun state -> itemsByKey state.Items))
 
           member _.Add sessionId itemId text =
             Firebase.NoteList.addItem client sessionId itemId text

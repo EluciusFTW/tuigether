@@ -53,6 +53,11 @@ public sealed record Session(Guid Id, bool IsDeleted)
     /// </summary>
     public ImmutableArray<Todo> Todos { get; init; } = [];
 
+    /// <summary>
+    /// The ids of the note-list items. The text is not part of any decision, so the write model leaves it out.
+    /// </summary>
+    public ImmutableArray<string> NoteIds { get; init; } = [];
+
     public static Session Create(SessionCreated created) => new(created.SessionId, IsDeleted: false);
 
     public static Session Apply(SessionDeleted _, Session session) => session with { IsDeleted = true };
@@ -117,6 +122,10 @@ public sealed record Session(Guid Id, bool IsDeleted)
 
     public static Session Apply(TodoRemoved removed, Session session) =>
         session with { Todos = session.Todos.RemoveAll(todo => todo.Id == removed.TodoId) };
+
+    public static Session Apply(NoteAdded added, Session session) => session with { NoteIds = [.. session.NoteIds, added.NoteId] };
+
+    public static Session Apply(NoteRemoved removed, Session session) => session with { NoteIds = session.NoteIds.Remove(removed.NoteId) };
 
     private static Session WithCompleted(Session session, string todoId, bool completed) =>
         session with

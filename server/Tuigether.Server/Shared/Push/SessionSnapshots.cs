@@ -15,7 +15,8 @@ public sealed record SessionSnapshots(
     SessionDriveHistory? DriveHistory,
     SessionNotes? Notes,
     SessionGoal? Goal,
-    SessionTodos? Todos)
+    SessionTodos? Todos,
+    SessionNoteList? NoteList)
 {
     public static async Task<SessionSnapshots> LoadAsync(IQuerySession query, Guid sessionId, CancellationToken cancellation)
     {
@@ -27,8 +28,9 @@ public sealed record SessionSnapshots(
         var notes = batch.Load<SessionNotes>(sessionId);
         var goal = batch.Load<SessionGoal>(sessionId);
         var todos = batch.Load<SessionTodos>(sessionId);
+        var noteList = batch.Load<SessionNoteList>(sessionId);
         await batch.Execute(cancellation);
-        return new(await participants, await data, await timer, await driveHistory, await notes, await goal, await todos);
+        return new(await participants, await data, await timer, await driveHistory, await notes, await goal, await todos, await noteList);
     }
 
     /// <summary>
@@ -45,6 +47,7 @@ public sealed record SessionSnapshots(
             Notes is null ? null : new SignalRMessage<SessionNotes>(Notes, clients),
             Goal is null ? null : new SignalRMessage<SessionGoal>(Goal, clients),
             Todos is null ? null : new SignalRMessage<SessionTodos>(Todos, clients),
+            NoteList is null ? null : new SignalRMessage<SessionNoteList>(NoteList, clients),
         }.OfType<object>().ToList();
 }
 

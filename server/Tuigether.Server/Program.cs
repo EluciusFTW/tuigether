@@ -3,6 +3,7 @@ using Marten;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Driving;
 using Tuigether.Server.Goal;
+using Tuigether.Server.NoteList;
 using Tuigether.Server.Notes;
 using Tuigether.Server.Presence;
 using Tuigether.Server.Sessions;
@@ -75,7 +76,8 @@ builder.Services
     .AddDriving()
     .AddNotes()
     .AddGoal()
-    .AddTodos();
+    .AddTodos()
+    .AddNoteList();
 
 builder.Services.AddWolverineHttp();
 

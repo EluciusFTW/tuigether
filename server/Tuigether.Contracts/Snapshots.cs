@@ -142,3 +142,19 @@ public sealed record SessionTodos(Guid Id)
 
     public override int GetHashCode() => HashCode.Combine(Id, Items.Length);
 }
+
+public sealed record NoteListItem(string Id, string Text);
+
+/// <summary>
+/// The note list of one Session, in the order that every Client shows.
+/// </summary>
+public sealed record SessionNoteList(Guid Id)
+{
+    public ImmutableArray<NoteListItem> Items { get; init; } = [];
+
+    // Record equality compares an ImmutableArray by reference.
+    public bool Equals(SessionNoteList? other) =>
+        other is not null && Id == other.Id && Items.SequenceEqual(other.Items);
+
+    public override int GetHashCode() => HashCode.Combine(Id, Items.Length);
+}

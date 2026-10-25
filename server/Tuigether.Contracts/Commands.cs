@@ -38,6 +38,12 @@ public static class CommandRoutes
     public const string MoveTodo = "/api/sessions/move-todo";
 
     public const string RemoveTodo = "/api/sessions/remove-todo";
+
+    public const string AddNote = "/api/sessions/add-note";
+
+    public const string ChangeNote = "/api/sessions/change-note";
+
+    public const string RemoveNote = "/api/sessions/remove-note";
 }
 
 public sealed record CreateSession(string Title, string Repository, string Branch);
@@ -102,3 +108,13 @@ public sealed record ReopenTodo(Guid SessionId, string TodoId);
 public sealed record MoveTodo(Guid SessionId, string TodoId, int NewPosition);
 
 public sealed record RemoveTodo(Guid SessionId, string TodoId);
+
+/// <summary>
+/// Appends a note at the end of the note list.
+/// </summary>
+/// <param name="NoteId">The id that the Client proposes. The server rejects an id that exists.</param>
+public sealed record AddNote(Guid SessionId, string NoteId, string Text);
+
+public sealed record ChangeNote(Guid SessionId, string NoteId, string Text);
+
+public sealed record RemoveNote(Guid SessionId, string NoteId);
