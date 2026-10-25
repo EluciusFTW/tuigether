@@ -47,7 +47,8 @@ has clients on different versions, and every record must stay readable in both d
   `Users.join`, `Users.leave`.
 - On quit, the app exits only after `Presence.Leave` completes, so the leave writes finish first.
 - List and todo items use keys from `PushId.generate`. The keys sort by creation time, and concurrent clients do not
-  collide. `TodoList` reorders items by swapping content between two fixed keys.
+  collide. The Firebase backend sends the todo items in key order. `TodoList` reorders items by swapping content
+  between two fixed keys.
 
 ## Locks and the timer
 
@@ -144,4 +145,8 @@ no-op.
 - The server rejects the acquire of a User who is not a Participant yet. So the Goal popup of an empty Goal opens after
   the join completes, in both modes. When the Goal arrives after the popup opened, the popup closes and releases the
   Edit lock. The popup has the idle auto-exit of Insert mode, because the server lock has no time limit.
+- The Todo group sends `AddTodo`, `ChangeTodoText`, `CompleteTodo`, `ReopenTodo`, `MoveTodo` and `RemoveTodo` with the
+  item id that the Client proposes. The snapshot `SessionTodos` holds the items in the order of the server.
+  `Todo.ModelChange` is `FromSnapshots`, so `TodoList` shows a change only when the snapshot arrives. The selection
+  follows its item from snapshot to snapshot.
 - An area that the server does not serve yet is a stub: its subscription sends nothing, and its intentions do nothing.

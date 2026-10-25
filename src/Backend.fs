@@ -121,8 +121,17 @@ type INotes =
 type IGoal =
   inherit IEditing
 
+// When a component shows the effect of its own write.
+type ModelChange =
+  // At once, before the write completes. The next snapshot overwrites it.
+  | Optimistic
+  // Only from the snapshot that contains the change. The backend can reject the write.
+  | FromSnapshots
+
 type ITodo =
-  abstract Subscription: sessionId: string -> Sub<Session.TodoState option>
+  abstract ModelChange: ModelChange
+  // The items with their ids, in display order.
+  abstract Subscription: sessionId: string -> Sub<(string * Session.TodoItemState) list option>
   abstract Add: sessionId: string -> itemId: string -> text: string -> Async<unit>
   // Carries the whole item for a backend that writes the text and the state together.
   abstract ChangeText: sessionId: string -> itemId: string -> item: Session.TodoItemState -> Async<unit>

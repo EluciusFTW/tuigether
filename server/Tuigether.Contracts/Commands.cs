@@ -26,6 +26,18 @@ public static class CommandRoutes
     public const string AcquireGoalEditLock = "/api/sessions/acquire-goal-edit-lock";
 
     public const string EndGoalEditing = "/api/sessions/end-goal-editing";
+
+    public const string AddTodo = "/api/sessions/add-todo";
+
+    public const string ChangeTodoText = "/api/sessions/change-todo-text";
+
+    public const string CompleteTodo = "/api/sessions/complete-todo";
+
+    public const string ReopenTodo = "/api/sessions/reopen-todo";
+
+    public const string MoveTodo = "/api/sessions/move-todo";
+
+    public const string RemoveTodo = "/api/sessions/remove-todo";
 }
 
 public sealed record CreateSession(string Title, string Repository, string Branch);
@@ -73,3 +85,20 @@ public sealed record AcquireGoalEditLock(Guid SessionId);
 /// Stores the Goal text of the Edit lock holder and releases the Edit lock.
 /// </summary>
 public sealed record EndGoalEditing(Guid SessionId, string Text);
+
+/// <summary>
+/// Appends a todo at the end of the todo list.
+/// </summary>
+/// <param name="TodoId">The id that the Client proposes. The server rejects an id that exists.</param>
+public sealed record AddTodo(Guid SessionId, string TodoId, string Text);
+
+public sealed record ChangeTodoText(Guid SessionId, string TodoId, string Text);
+
+public sealed record CompleteTodo(Guid SessionId, string TodoId);
+
+public sealed record ReopenTodo(Guid SessionId, string TodoId);
+
+/// <param name="NewPosition">The zero-based index of the todo in the list after the move.</param>
+public sealed record MoveTodo(Guid SessionId, string TodoId, int NewPosition);
+
+public sealed record RemoveTodo(Guid SessionId, string TodoId);

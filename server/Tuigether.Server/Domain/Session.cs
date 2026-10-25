@@ -48,6 +48,11 @@ public sealed record Session(Guid Id, bool IsDeleted)
     /// </summary>
     public string? GoalEditLockHolder { get; init; }
 
+    /// <summary>
+    /// In the order of <see cref="SessionTodos.Items"/>.
+    /// </summary>
+    public ImmutableArray<Todo> Todos { get; init; } = [];
+
     public static Session Create(SessionCreated created) => new(created.SessionId, IsDeleted: false);
 
     public static Session Apply(SessionDeleted _, Session session) => session with { IsDeleted = true };
@@ -98,6 +103,32 @@ public sealed record Session(Guid Id, bool IsDeleted)
 
     public static Session Apply(GoalEditingEnded _, Session session) => session with { GoalEditLockHolder = null };
 
+    public static Session Apply(TodoAdded added, Session session) =>
+        session with { Todos = [.. session.Todos, new Todo(added.TodoId, Completed: false)] };
+
+    public static Session Apply(TodoCompleted completed, Session session) => WithCompleted(session, completed.TodoId, completed: true);
+
+    public static Session Apply(TodoReopened reopened, Session session) => WithCompleted(session, reopened.TodoId, completed: false);
+
+    public static Session Apply(TodoMoved moved, Session session) =>
+        session.Todos.FirstOrDefault(todo => todo.Id == moved.TodoId) is { } todo
+            ? session with { Todos = session.Todos.Remove(todo).Insert(moved.NewPosition, todo) }
+            : session;
+
+    public static Session Apply(TodoRemoved removed, Session session) =>
+        session with { Todos = session.Todos.RemoveAll(todo => todo.Id == removed.TodoId) };
+
+    private static Session WithCompleted(Session session, string todoId, bool completed) =>
+        session with
+        {
+            Todos = [.. session.Todos.Select(todo => todo.Id == todoId ? todo with { Completed = completed } : todo)],
+        };
+
     private static Session Idle(Session session) =>
         session with { Timer = TimerPhase.Idle, DriveEndsAt = null, DriveRemaining = TimeSpan.Zero, BreakEndsAt = null };
 }
+
+/// <summary>
+/// One item of the todo list. The text is not part of any decision, so the write model leaves it out.
+/// </summary>
+public sealed record Todo(string Id, bool Completed);

@@ -17,7 +17,7 @@ type InputMode =
   // text; on confirm the text is read back and written to that item.
   | EditingItem of id: string * editor: TextBoxWidget
 
-// Items carry their Firebase push-ID so toggles and deletes target a stable key
+// Items carry their push-ID so toggles and deletes target a stable key
 // and concurrent multi-user edits do not collide.
 type TodoItem = {
   Id: string
@@ -29,6 +29,8 @@ type Model = {
   InputMode: InputMode
   Items: TodoItem list
   SelectedIndex: int
+  // The id of an added item that the next snapshot can bring, see `Backend.FromSnapshots`.
+  SelectWhenShown: string option
   Backend: Backend.Backend
   SessionId: string
 }
@@ -46,7 +48,7 @@ type Msg =
   | Delete
   | MoveUp
   | MoveDown
-  | RemoteStateLoaded of Session.TodoState option
+  | RemoteStateLoaded of (string * Session.TodoItemState) list option
   | StateSaved
 
 let private normalBindings: KeyBinding<Model, Msg> list = [
@@ -123,6 +125,7 @@ let init (backend: Backend.Backend) (sessionId: string) = {
   InputMode = Normal
   Items = []
   SelectedIndex = 0
+  SelectWhenShown = None
   Backend = backend
   SessionId = sessionId
 }
@@ -184,6 +187,17 @@ let private swapAdjacent (model: Model) (topIndex: int) =
       | _ -> it)
 
   newItems, newTop, newBottom
+
+// `changed` is the model with the effect of a write. A backend that changes the model only from snapshots keeps the
+// items and the selection until the snapshot arrives.
+let private afterWrite (model: Model) (changed: Model) =
+  match model.Backend.Todo.ModelChange with
+  | Backend.Optimistic -> changed
+  | Backend.FromSnapshots -> {
+      model with
+          InputMode = changed.InputMode
+          SelectWhenShown = changed.SelectWhenShown
+    }
 
 let update msg model =
   match msg with
@@ -264,10 +278,11 @@ let update msg model =
         model with
             Items = newItems
             SelectedIndex = newItems.Length - 1
+            SelectWhenShown = Some newItem.Id
             InputMode = Normal
       }
 
-      updated, addItemCmd updated newItem
+      afterWrite model updated, addItemCmd updated newItem
     | _ -> model, []
   | CancelAdd -> { model with InputMode = Normal }, []
   | ConfirmEdit ->
@@ -293,7 +308,7 @@ let update msg model =
 
         // The item can vanish mid-edit if another user deletes it; skip the write.
         match newItems |> List.tryFind (fun it -> it.Id = id) with
-        | Some edited -> updated, changeTextCmd updated edited
+        | Some edited -> afterWrite model updated, changeTextCmd updated edited
         | None -> updated, []
     | _ -> model, []
   | Toggle ->
@@ -314,7 +329,7 @@ let update msg model =
           | true -> toggled
           | false -> it)
 
-      { model with Items = newItems }, setCompletedCmd model toggled.Id toggled.Completed
+      afterWrite model { model with Items = newItems }, setCompletedCmd model toggled.Id toggled.Completed
   | Delete ->
     match model.Items with
     | [] -> model, []
@@ -333,7 +348,7 @@ let update msg model =
             SelectedIndex = newIndex
       }
 
-      updated, deleteItemCmd updated removed.Id
+      afterWrite model updated, deleteItemCmd updated removed.Id
   | MoveUp ->
     match model.SelectedIndex with
     | i when i > 0 ->
@@ -345,7 +360,7 @@ let update msg model =
             SelectedIndex = i - 1
       }
 
-      updated, moveCmd updated model.Items.[i] (i - 1) newTop newBottom
+      afterWrite model updated, moveCmd updated model.Items.[i] (i - 1) newTop newBottom
     | _ -> model, []
   | MoveDown ->
     match model.SelectedIndex with
@@ -358,31 +373,37 @@ let update msg model =
             SelectedIndex = i + 1
       }
 
-      updated, moveCmd updated model.Items.[i] (i + 1) newTop newBottom
+      afterWrite model updated, moveCmd updated model.Items.[i] (i + 1) newTop newBottom
     | _ -> model, []
   | RemoteStateLoaded(Some state) ->
     let items =
-      match isNull state.Items with
-      | true -> []
-      | false ->
-        state.Items
-        |> Seq.sortBy (fun kvp -> kvp.Key)
-        |> Seq.map (fun kvp -> {
-          Id = kvp.Key
-          Text = kvp.Value.Text
-          Completed = kvp.Value.Completed
-        })
-        |> Seq.toList
+      state
+      |> List.map (fun (id, item) -> {
+        Id = id
+        Text = item.Text
+        Completed = item.Completed
+      })
 
-    let selectedIndex =
-      match items with
-      | [] -> 0
-      | _ -> model.SelectedIndex |> max 0 |> min (items.Length - 1)
+    let indexOf id =
+      items |> List.tryFindIndex (fun item -> item.Id = id)
+
+    let selectedId = model.Items |> List.tryItem model.SelectedIndex |> Option.map _.Id
+
+    // The selection follows its item, so a moved item stays selected.
+    let selectedIndex, selectWhenShown =
+      match model.SelectWhenShown |> Option.bind indexOf, selectedId |> Option.bind indexOf with
+      | Some index, _ -> index, None
+      | None, Some index -> index, model.SelectWhenShown
+      | None, None ->
+        match items with
+        | [] -> 0, model.SelectWhenShown
+        | _ -> model.SelectedIndex |> max 0 |> min (items.Length - 1), model.SelectWhenShown
 
     {
       model with
           Items = items
           SelectedIndex = selectedIndex
+          SelectWhenShown = selectWhenShown
     },
     []
   | RemoteStateLoaded None -> model, []

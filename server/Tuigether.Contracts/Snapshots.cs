@@ -126,3 +126,19 @@ public sealed record SessionNotes(Guid Id, string Text, string? EditLockHolder);
 /// </summary>
 /// <param name="EditLockHolder">The Participant who edits the Goal, or null when the Edit lock is free.</param>
 public sealed record SessionGoal(Guid Id, string Text, string? EditLockHolder);
+
+public sealed record TodoItem(string Id, string Text, bool Completed);
+
+/// <summary>
+/// The todo list of one Session, in the order that every Client shows.
+/// </summary>
+public sealed record SessionTodos(Guid Id)
+{
+    public ImmutableArray<TodoItem> Items { get; init; } = [];
+
+    // Record equality compares an ImmutableArray by reference.
+    public bool Equals(SessionTodos? other) =>
+        other is not null && Id == other.Id && Items.SequenceEqual(other.Items);
+
+    public override int GetHashCode() => HashCode.Combine(Id, Items.Length);
+}

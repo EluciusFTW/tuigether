@@ -95,7 +95,7 @@ The server project `server/Tuigether.Server` uses Vertical Slice Architecture. O
 
 Folder rules:
 
-- A feature folder (`Sessions/`, `Presence/`, `Driving/`, `Notes/`, `Goal/`) holds one subfolder per use case. A use case folder holds the
+- A feature folder (`Sessions/`, `Presence/`, `Driving/`, `Notes/`, `Goal/`, `Todos/`) holds one subfolder per use case. A use case folder holds the
   endpoint, the message, the handler and the pure rule of that use case: `Driving/Rotate/`. Nest deeper when a use case
   has parts of its own.
 - Code that two or more slices use moves up to their lowest common folder. Use no partial classes to spread one type
@@ -120,7 +120,7 @@ Module rules:
 - A module sits in the folder closest to what it registers. A parent folder gets a `Module.cs` that calls the modules of
   its subfolders. It also registers what belongs to the parent folder itself, as `Presence/Module.cs` does with the
   durable queue of `CheckParticipantLeft`. `Program.cs` calls the top-level modules: `AddDomain()`, `AddSessions()`,
-  `AddPresence()`, `AddDriving()`, `AddNotes()`, `AddGoal()` and `AddShared()`.
+  `AddPresence()`, `AddDriving()`, `AddNotes()`, `AddGoal()`, `AddTodos()` and `AddShared()`.
 - The file is always `Module.cs`, and the class is always `public static class Module`. It holds one extension member
   on `IServiceCollection` in an `extension` block, named after the folder path: `AddDrivingTimerView()`. Each folder
   has its own namespace, so the `Module` classes do not collide. A caller uses the extension member, not the class

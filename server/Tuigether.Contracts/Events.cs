@@ -87,3 +87,16 @@ public sealed record GoalChanged(Guid SessionId, string Text, string User, DateT
 /// The Edit lock of the Goal is free. The holder ended the edit, or the holder left the Session.
 /// </summary>
 public sealed record GoalEditingEnded(Guid SessionId, string User, DateTimeOffset At);
+
+public sealed record TodoAdded(Guid SessionId, string TodoId, string Text, string User, DateTimeOffset At);
+
+public sealed record TodoTextChanged(Guid SessionId, string TodoId, string Text, string User, DateTimeOffset At);
+
+public sealed record TodoCompleted(Guid SessionId, string TodoId, string User, DateTimeOffset At);
+
+public sealed record TodoReopened(Guid SessionId, string TodoId, string User, DateTimeOffset At);
+
+/// <param name="NewPosition">The zero-based index of the todo in the list after the move.</param>
+public sealed record TodoMoved(Guid SessionId, string TodoId, int NewPosition, string User, DateTimeOffset At);
+
+public sealed record TodoRemoved(Guid SessionId, string TodoId, string User, DateTimeOffset At);

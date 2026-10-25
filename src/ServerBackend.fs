@@ -411,6 +411,16 @@ let private notesState (notes: SessionNotes) : Session.NotesState = {
   LockedAt = lockedAt notes.EditLockHolder
 }
 
+let private todoItems (todos: SessionTodos) =
+  todos.Items
+  |> Seq.map (fun item ->
+    item.Id,
+    {
+      Session.TodoItemState.Text = item.Text
+      Session.TodoItemState.Completed = item.Completed
+    })
+  |> List.ofSeq
+
 let private historyType (kind: DriveHistoryKind) =
   match kind with
   | DriveHistoryKind.Paused -> Session.DriveEventType.Paused
@@ -738,25 +748,30 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
       }
     Todo =
       { new Backend.ITodo with
-          member _.Subscription _sessionId = []
+          member _.ModelChange = Backend.FromSnapshots
 
-          member _.Add _sessionId _itemId _text =
-            nothing
+          member _.Subscription sessionId = [
+            [ "server-todos"; sessionId ],
+            fun dispatch -> onSnapshotOf<SessionTodos> hub sessionId _.Id (todoItems >> Some >> dispatch)
+          ]
 
-          member _.ChangeText _sessionId _itemId _item =
-            nothing
+          member _.Add sessionId itemId text =
+            postOnSession sessionId (fun id -> AddTodo(id, itemId, text)) CommandRoutes.AddTodo
 
-          member _.Complete _sessionId _itemId =
-            nothing
+          member _.ChangeText sessionId itemId item =
+            postOnSession sessionId (fun id -> ChangeTodoText(id, itemId, item.Text)) CommandRoutes.ChangeTodoText
 
-          member _.Reopen _sessionId _itemId =
-            nothing
+          member _.Complete sessionId itemId =
+            postOnSession sessionId (fun id -> CompleteTodo(id, itemId)) CommandRoutes.CompleteTodo
 
-          member _.Move _sessionId _itemId _newPosition ((_, _), (_, _)) =
-            nothing
+          member _.Reopen sessionId itemId =
+            postOnSession sessionId (fun id -> ReopenTodo(id, itemId)) CommandRoutes.ReopenTodo
 
-          member _.Remove _sessionId _itemId =
-            nothing
+          member _.Move sessionId itemId newPosition ((_, _), (_, _)) =
+            postOnSession sessionId (fun id -> MoveTodo(id, itemId, newPosition)) CommandRoutes.MoveTodo
+
+          member _.Remove sessionId itemId =
+            postOnSession sessionId (fun id -> RemoveTodo(id, itemId)) CommandRoutes.RemoveTodo
       }
     NoteList =
       { new Backend.INoteList with

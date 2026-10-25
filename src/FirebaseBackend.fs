@@ -97,6 +97,16 @@ let private rotateDriver
 let private saveTodoItem (client: FirebaseClient) (sessionId: string) (itemId: string) (item: Session.TodoItemState) =
   Firebase.Todo.setItem client sessionId itemId item.Text item.Completed
 
+// The push-ID keys sort by creation time, and `TodoList` reorders items by swapping content between two keys.
+let private todoItems (state: Session.TodoState) =
+  match isNull state.Items with
+  | true -> []
+  | false ->
+    state.Items
+    |> Seq.sortBy _.Key
+    |> Seq.map (fun item -> item.Key, item.Value)
+    |> List.ofSeq
+
 let private leave
   (client: FirebaseClient)
   (sessionId: string)
@@ -239,8 +249,10 @@ let create (config: Firebase.Config) : Backend.Backend =
       }
     Todo =
       { new Backend.ITodo with
+          member _.ModelChange = Backend.Optimistic
+
           member _.Subscription sessionId =
-            Firebase.Todo.subscription client sessionId id
+            Firebase.Todo.subscription client sessionId (Option.map todoItems)
 
           member _.Add sessionId itemId text =
             Firebase.Todo.addItem client sessionId itemId text

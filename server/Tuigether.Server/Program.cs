@@ -9,6 +9,7 @@ using Tuigether.Server.Sessions;
 using Tuigether.Server.Shared;
 using Tuigether.Server.Shared.Hubs;
 using Tuigether.Server.Shared.Requests;
+using Tuigether.Server.Todos;
 using Wolverine;
 using Wolverine.ErrorHandling;
 using Wolverine.Http;
@@ -73,7 +74,8 @@ builder.Services
     .AddPresence()
     .AddDriving()
     .AddNotes()
-    .AddGoal();
+    .AddGoal()
+    .AddTodos();
 
 builder.Services.AddWolverineHttp();
 

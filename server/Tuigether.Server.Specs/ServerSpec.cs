@@ -107,6 +107,12 @@ public abstract class ServerSpec(ServerFixture server) : WolverineHttpSpec(serve
             EndNotesEditing => CommandRoutes.EndNotesEditing,
             AcquireGoalEditLock => CommandRoutes.AcquireGoalEditLock,
             EndGoalEditing => CommandRoutes.EndGoalEditing,
+            AddTodo => CommandRoutes.AddTodo,
+            ChangeTodoText => CommandRoutes.ChangeTodoText,
+            CompleteTodo => CommandRoutes.CompleteTodo,
+            ReopenTodo => CommandRoutes.ReopenTodo,
+            MoveTodo => CommandRoutes.MoveTodo,
+            RemoveTodo => CommandRoutes.RemoveTodo,
             _ => throw new ArgumentException($"No route for {command.GetType().Name}."),
         };
 
