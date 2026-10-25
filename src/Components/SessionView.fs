@@ -64,9 +64,7 @@ let init (deps: Dependencies) (user: string) (avatarName: string) (sessionId: st
 
   let joinCmd = Cmd.OfAsync.perform (fun () -> deps.Backend.Presence.Join sessionId user avatarName) () JoinCompleted
 
-  let goalPopupCmd = Cmd.ofMsg (SessionInfoMsg SessionInfo.MaybeShowGoalPopup)
-
-  model, Cmd.batch [ joinCmd; goalPopupCmd ]
+  model, joinCmd
 
 let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
   match msg with
@@ -105,7 +103,10 @@ let update (deps: Dependencies) msg model : Model * Cmd<Msg> * OutMsg option =
         Cmd.OfAsync.perform (fun () -> model.Backend.Sessions.Start model.SessionId) () (fun () -> StatusWritten)
       | _ -> Cmd.none
 
-    { model with Status = "connected" }, startedCmd, None
+    // The server gives the Edit lock of the Goal only to a Participant, so the popup waits for the join.
+    let goalPopupCmd = Cmd.ofMsg (SessionInfoMsg SessionInfo.MaybeShowGoalPopup)
+
+    { model with Status = "connected" }, Cmd.batch [ startedCmd; goalPopupCmd ], None
   | JoinCompleted(Error e) ->
     let status = sprintf "join error: %s" e
 

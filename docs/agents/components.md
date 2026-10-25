@@ -20,8 +20,9 @@ A component is one F# module in `src/Components/`. Copy `TodoList.fs` for the st
   `model.Backend.Todo.Add`, and returns `StateSaved`. Remote changes come back through the subscription, so
   `StateSaved` changes nothing. The component computes the values that the intention proposes, for example the new
   item id from `PushId.generate`.
-- The acquire of an Edit lock is the one write whose answer changes the model. `Notes` starts Insert mode only when
-  `AcquireEditLock` answers `Ok`. Until the answer, `capturesInput` is true, so no key reaches another binding.
+- The acquire of an Edit lock is the one write whose answer changes the model. `Notes` and `SessionInfo` open their
+  editor only when `AcquireEditLock` answers `Ok`. Until the answer, `capturesInput` is true, so no key reaches another
+  binding.
 - An editing `InputMode` case carries a live `TextBoxWidget`. `TextEditing.apply` mutates it in place, so the model
   keeps the same instance. Read the text back from the widget on confirm. `TextEditing.isMutation` tells you if an
   action needs a save.

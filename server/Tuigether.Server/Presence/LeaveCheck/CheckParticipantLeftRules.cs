@@ -20,6 +20,7 @@ public static class CheckParticipantLeftRules
                     new ParticipantLeft(session.Id, user, now),
                     .. LeaveDrive(session, user, now),
                     .. LeaveNotes(session, user, now),
+                    .. LeaveGoal(session, user, now),
                     .. Finish(session, user, now),
                 ],
         };
@@ -37,10 +38,14 @@ public static class CheckParticipantLeftRules
         };
 
     /// <summary>
-    /// The Edit lock has no time limit, so the leave of its holder is the only release without an end of the edit.
+    /// An Edit lock has no time limit, so the leave of its holder is the only release without an end of the edit.
     /// </summary>
     private static ImmutableArray<object> LeaveNotes(Session session, string user, DateTimeOffset now) =>
         session.NotesEditLockHolder == user ? [new NotesEditingEnded(session.Id, user, now)] : [];
+
+    /// <inheritdoc cref="LeaveNotes"/>
+    private static ImmutableArray<object> LeaveGoal(Session session, string user, DateTimeOffset now) =>
+        session.GoalEditLockHolder == user ? [new GoalEditingEnded(session.Id, user, now)] : [];
 
     private static ImmutableArray<object> Finish(Session session, string user, DateTimeOffset now) =>
         session is { Status: SessionStatus.Started, Participants.Length: 1 } ? [new SessionFinished(session.Id, user, now)] : [];

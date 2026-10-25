@@ -22,6 +22,10 @@ public static class CommandRoutes
     public const string AcquireNotesEditLock = "/api/sessions/acquire-notes-edit-lock";
 
     public const string EndNotesEditing = "/api/sessions/end-notes-editing";
+
+    public const string AcquireGoalEditLock = "/api/sessions/acquire-goal-edit-lock";
+
+    public const string EndGoalEditing = "/api/sessions/end-goal-editing";
 }
 
 public sealed record CreateSession(string Title, string Repository, string Branch);
@@ -59,3 +63,13 @@ public sealed record AcquireNotesEditLock(Guid SessionId);
 /// Stores the Notes text of the Edit lock holder and releases the Edit lock.
 /// </summary>
 public sealed record EndNotesEditing(Guid SessionId, string Text);
+
+/// <summary>
+/// Gives the caller the Edit lock of the Goal. Only the holder of the Edit lock edits the Goal.
+/// </summary>
+public sealed record AcquireGoalEditLock(Guid SessionId);
+
+/// <summary>
+/// Stores the Goal text of the Edit lock holder and releases the Edit lock.
+/// </summary>
+public sealed record EndGoalEditing(Guid SessionId, string Text);

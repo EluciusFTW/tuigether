@@ -76,3 +76,14 @@ public sealed record NotesEdited(Guid SessionId, string Text, string User, DateT
 /// The Edit lock of the Notes is free. The holder ended the edit, or the holder left the Session.
 /// </summary>
 public sealed record NotesEditingEnded(Guid SessionId, string User, DateTimeOffset At);
+
+/// <param name="User">The Participant who holds the Edit lock of the Goal from now on.</param>
+public sealed record GoalEditingStarted(Guid SessionId, string User, DateTimeOffset At);
+
+/// <param name="Text">The whole new Goal text.</param>
+public sealed record GoalChanged(Guid SessionId, string Text, string User, DateTimeOffset At);
+
+/// <summary>
+/// The Edit lock of the Goal is free. The holder ended the edit, or the holder left the Session.
+/// </summary>
+public sealed record GoalEditingEnded(Guid SessionId, string User, DateTimeOffset At);

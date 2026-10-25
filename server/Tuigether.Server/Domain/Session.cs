@@ -41,6 +41,13 @@ public sealed record Session(Guid Id, bool IsDeleted)
     /// </summary>
     public string? NotesEditLockHolder { get; init; }
 
+    public string GoalText { get; init; } = "";
+
+    /// <summary>
+    /// The Participant who holds the Edit lock of the Goal. Null when the Edit lock is free.
+    /// </summary>
+    public string? GoalEditLockHolder { get; init; }
+
     public static Session Create(SessionCreated created) => new(created.SessionId, IsDeleted: false);
 
     public static Session Apply(SessionDeleted _, Session session) => session with { IsDeleted = true };
@@ -83,6 +90,13 @@ public sealed record Session(Guid Id, bool IsDeleted)
     public static Session Apply(NotesEdited edited, Session session) => session with { NotesText = edited.Text };
 
     public static Session Apply(NotesEditingEnded _, Session session) => session with { NotesEditLockHolder = null };
+
+    public static Session Apply(GoalEditingStarted started, Session session) =>
+        session with { GoalEditLockHolder = started.User };
+
+    public static Session Apply(GoalChanged changed, Session session) => session with { GoalText = changed.Text };
+
+    public static Session Apply(GoalEditingEnded _, Session session) => session with { GoalEditLockHolder = null };
 
     private static Session Idle(Session session) =>
         session with { Timer = TimerPhase.Idle, DriveEndsAt = null, DriveRemaining = TimeSpan.Zero, BreakEndsAt = null };

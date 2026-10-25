@@ -367,8 +367,23 @@ let private toData
 let private summaryData (summary: SessionSummary) =
   toData summary.Title summary.Status summary.CreatedBy summary.Repository summary.Branch summary.CreatedAt null
 
-let private sessionData (data: SessionData) =
-  toData data.Title data.Status data.CreatedBy data.Repository data.Branch data.CreatedAt data.Driver
+// The server lock has no time limit, so the lock never expires in `Locking`.
+let private lockedAt (holder: string) =
+  match isNull holder with
+  | true -> 0L
+  | false -> Int64.MaxValue
+
+let private sessionData (data: SessionData) (goal: SessionGoal option) =
+  let shown = toData data.Title data.Status data.CreatedBy data.Repository data.Branch data.CreatedAt data.Driver
+
+  match goal with
+  | Some goal -> {
+      shown with
+          Goal = goal.Text
+          GoalLockOwner = goal.EditLockHolder
+          GoalLockedAt = lockedAt goal.EditLockHolder
+    }
+  | None -> shown
 
 let private timerSnapshot (timer: SessionTimer) : Backend.TimerSnapshot option =
   let phase =
@@ -390,14 +405,10 @@ let private timerSnapshot (timer: SessionTimer) : Backend.TimerSnapshot option =
       |> Option.defaultValue 0L
   })
 
-// The server lock has no time limit, so the lock never expires in `Locking`.
 let private notesState (notes: SessionNotes) : Session.NotesState = {
   FreetextContent = notes.Text
   LockOwner = notes.EditLockHolder
-  LockedAt =
-    match isNull notes.EditLockHolder with
-    | true -> 0L
-    | false -> Int64.MaxValue
+  LockedAt = lockedAt notes.EditLockHolder
 }
 
 let private historyType (kind: DriveHistoryKind) =
@@ -578,9 +589,25 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
           member _.Start _sessionId =
             nothing
 
+          // The Goal has a snapshot of its own, and the Client shows it with the Session data.
           member _.DataSubscription sessionId = [
             [ "server-session-data"; sessionId ],
-            fun dispatch -> onSnapshotOf<SessionData> hub sessionId _.Id (sessionData >> Some >> dispatch)
+            fun dispatch ->
+              let latest = ref (None, None)
+
+              // The replay of `OnLatest` and a push can run at the same moment.
+              let show change =
+                lock latest (fun () ->
+                  latest.Value <- change latest.Value
+
+                  match latest.Value with
+                  | Some data, goal -> dispatch (Some(sessionData data goal))
+                  | None, _ -> ())
+
+              disposeAll [
+                onSnapshotOf<SessionData> hub sessionId _.Id (fun data -> show (fun (_, goal) -> Some data, goal))
+                onSnapshotOf<SessionGoal> hub sessionId _.Id (fun goal -> show (fun (data, _) -> data, Some goal))
+              ]
           ]
       }
     Presence =
@@ -698,14 +725,16 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
       }
     Goal =
       { new Backend.IGoal with
-          member _.AcquireEditLock _sessionId _lock _current =
-            async { return Ok() }
+          // The server checks the Edit lock and takes the user from the request headers.
+          member _.AcquireEditLock sessionId _lock _current =
+            tryPostOnSession sessionId AcquireGoalEditLock CommandRoutes.AcquireGoalEditLock
 
+          // The others see the text when the edit ends (ADR 0004).
           member _.SaveDraft _sessionId _text _lock =
             nothing
 
-          member _.EndEdit _sessionId _text =
-            nothing
+          member _.EndEdit sessionId text =
+            postOnSession sessionId (fun id -> EndGoalEditing(id, text)) CommandRoutes.EndGoalEditing
       }
     Todo =
       { new Backend.ITodo with

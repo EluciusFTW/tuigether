@@ -120,3 +120,9 @@ public sealed record SessionDriveHistory(Guid Id)
 /// </summary>
 /// <param name="EditLockHolder">The Participant who edits the Notes, or null when the Edit lock is free.</param>
 public sealed record SessionNotes(Guid Id, string Text, string? EditLockHolder);
+
+/// <summary>
+/// The Goal of one Session.
+/// </summary>
+/// <param name="EditLockHolder">The Participant who edits the Goal, or null when the Edit lock is free.</param>
+public sealed record SessionGoal(Guid Id, string Text, string? EditLockHolder);

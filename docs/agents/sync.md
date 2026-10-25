@@ -94,7 +94,7 @@ expires by the time limit in `Locking.fs`.
 ### Edit lock and live typing
 
 `Notes` and `Goal` share `IEditing`. `AcquireEditLock` sends the proposed lock and the lock that the Client shows.
-`Notes` starts Insert mode when it answers `Ok`. The Firebase backend checks the shown lock with `Locking`, and it answers
+`Notes` and `Goal` open their editor when `AcquireEditLock` answers `Ok`. The Firebase backend checks the shown lock with `Locking`, and it answers
 before the lock write completes. `SaveDraft` is the debounced save while the User types, and it refreshes the lock. `EndEdit` sends the final text when Insert mode
 ends, by Esc or by the idle auto-exit, and it releases the lock. A backend without live typing makes `SaveDraft` a
 no-op.
@@ -139,4 +139,9 @@ no-op.
   `Notes.SaveDraft` is a no-op, so the others see the text when the edit ends (ADR 0004). The server releases the Edit
   lock when its holder leaves. The lock has no time limit, so the backend gives it `LockedAt = Int64.MaxValue` for
   `Locking`.
+- The Goal has the same Edit lock, with `AcquireGoalEditLock` and `EndGoalEditing`. Its snapshot `SessionGoal` arrives
+  apart from `SessionData`. The data subscription merges the two into one `Session.Data`.
+- The server rejects the acquire of a User who is not a Participant yet. So the Goal popup of an empty Goal opens after
+  the join completes, in both modes. When the Goal arrives after the popup opened, the popup closes and releases the
+  Edit lock. The popup has the idle auto-exit of Insert mode, because the server lock has no time limit.
 - An area that the server does not serve yet is a stub: its subscription sends nothing, and its intentions do nothing.
