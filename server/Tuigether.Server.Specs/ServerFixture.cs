@@ -42,6 +42,8 @@ public sealed class ServerFixture : IAsyncLifetime
 
     public IAlbaHost Host => _host ?? throw new InvalidOperationException("The fixture has not started its node.");
 
+    public string ConnectionString => _postgres.GetConnectionString();
+
     /// <summary>
     /// The server clock of every node. It stands still until a spec moves it.
     /// </summary>
