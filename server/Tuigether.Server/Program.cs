@@ -51,6 +51,9 @@ builder.Host.UseWolverine(static options =>
     options.Discovery.IncludeAssembly(typeof(Program).Assembly);
     options.Policies.AutoApplyTransactions();
 
+    // A Command handler takes the user from Envelope.UserName, see RequestCheckMiddleware.
+    options.EnableRelayOfUserName = true;
+
     // BroadcastToAllNodesAsync reaches the other nodes only in this mode.
     options.Durability.Mode = DurabilityMode.Balanced;
 

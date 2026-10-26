@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,39 @@ namespace Tuigether.Server.Driving.Pause;
 public static class PauseDriveEndpoint
 {
     [WolverinePost(CommandRoutes.PauseDrive)]
-    public static Task<IResult> Post(
-        PauseDrive command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new PauseDriveBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Rotate.RotateDriverBy"/>
-public sealed record PauseDriveBy(PauseDrive Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(PauseDrive command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class PauseDriveHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        PauseDriveBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        PauseDrive command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => PauseDriveRules.Pause(current, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (session.Timer == TimerPhase.Break)
+        {
+            return SessionCommand.Reject(DrivingRules.BreakRunsReason);
+        }
+
+        if (session is not { Timer: TimerPhase.DriveRunning, DriveEndsAt: { } endsAt })
+        {
+            return SessionCommand.Reject("No Drive runs.");
+        }
+
+        var now = clock.GetUtcNow();
+        return SessionCommand.Accept(session, [new DrivePaused(session.Id, SessionRules.TimeLeft(endsAt, now), SessionCommand.UserOf(envelope), now)]);
+    }
 }

@@ -23,7 +23,7 @@ public static class RemoveTodoEndpoint
         SessionCommand.InvokeAsync(bus, new RemoveTodoBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record RemoveTodoBy(RemoveTodo Command, string User)
 {
     public Guid SessionId => Command.SessionId;

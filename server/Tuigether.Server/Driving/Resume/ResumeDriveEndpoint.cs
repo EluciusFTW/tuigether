@@ -23,7 +23,7 @@ public static class ResumeDriveEndpoint
         SessionCommand.InvokeAsync(bus, new ResumeDriveBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record ResumeDriveBy(ResumeDrive Command, string User)
 {
     public Guid SessionId => Command.SessionId;

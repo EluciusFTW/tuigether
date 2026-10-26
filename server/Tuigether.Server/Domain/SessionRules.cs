@@ -4,12 +4,14 @@ namespace Tuigether.Server.Domain;
 
 public static class SessionRules
 {
+    public const string DeletedReason = "The Session is deleted.";
+
     /// <summary>
     /// Every Command on an existing Session passes this rule first.
     /// </summary>
     public static Result<Session, string> CheckNotDeleted(Session session) =>
         session.IsDeleted
-            ? Result.Error("The Session is deleted.")
+            ? Result.Error(DeletedReason)
             : Result.Ok(session);
 
     /// <summary>

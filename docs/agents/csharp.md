@@ -41,18 +41,25 @@ Known conflicts:
   with `opts.OnException<T>()`. In code that Wolverine calls, this replaces the catch-and-convert rule.
 - **Handler shape.** A handler is a `public static class` whose name ends in `Handler`, with a `Handle` or
   `HandleAsync` method. It gets services as method parameters, not through a constructor. It publishes further
-  messages as return values (cascading messages), not through `IMessageBus`. The handler is the shell, and a pure
-  function makes the business decision.
+  messages as return values (cascading messages), not through `IMessageBus`. The generated code loads and saves, so
+  `Handle` itself is the pure decision: it gets the aggregate and returns the events.
 - **Command (mediator style).** A Wolverine retry policy applies to a message handler, also inline through
   `IMessageBus.InvokeAsync`, but not to an HTTP endpoint. A Command on an existing Session must run again against the
-  new state after a concurrency conflict. Its endpoint therefore stays thin: it wraps the Command and the user name into
-  a message (`RotateDriverBy` in `Driving/Rotate/`) and calls `SessionCommand.InvokeAsync` (`Shared/Commands/`). The
-  message handler uses the aggregate handler workflow (`[WriteAggregate]`) and calls a pure rule. It returns a
-  `CommandOutcome` as the reply, and `SessionCommand` turns the outcome into the HTTP answer. `SessionCommand.Decide`
-  builds the reply, the events and the broadcast from the rule's `Result`. A Command that starts a stream has no
-  concurrency conflict. `CreateSessionHandler` in `Sessions/Create/` uses the same convention all the same, so that
-  every Command has one shape. For a Command, this entry replaces "Reject in a `Validate`, `Before` or `Load` method"
-  from **Failure in a handler**.
+  new state after a concurrency conflict. Its endpoint therefore stays thin: it passes the Command to
+  `SessionCommand.InvokeAsync` (`Shared/Commands/`). The message handler uses the aggregate handler workflow
+  (`[WriteAggregate]`) and decides in `Handle`: guard clauses first, then the events. It takes the user from
+  `Envelope.UserName`, through `SessionCommand.UserOf`. It returns the reply with `SessionCommand.NotFound`, `Reject`
+  or `Accept`, as `Driving/Rotate/` does. `Accept` adds the broadcast. `SessionCommand.InvokeAsync` turns the
+  `CommandOutcome` into the HTTP answer. For a Command, this entry replaces "Reject in a `Validate`, `Before` or
+  `Load` method" from **Failure in a handler**.
+- **Command with a `*Rules.cs` file.** The other Commands still use the earlier shape: the endpoint wraps the Command
+  and the user name into a `*By` message, the handler calls a pure rule that returns a `Result`, and
+  `SessionCommand.Decide` builds the reply. A Command that starts a stream has no concurrency conflict.
+  `CreateSessionHandler` in `Sessions/Create/` uses the mediator convention all the same, so that every Command goes
+  through `SessionCommand.InvokeAsync`.
+- **User name of a request.** `RequestCheckMiddleware` makes the user name header the user of the request.
+  `EnableRelayOfUserName` in `Program.cs` makes Wolverine copy it to the envelope of each message that an endpoint
+  sends.
 - **Bobcat and an invoked handler.** Bobcat counts the events of a message handler that an endpoint invokes as a
   cascade, so `ThenEvents` and `ThenNoEvents` do not see them. A spec of such a Command checks the stream with
   `ThenEventsOn<Session>(id, version, ...)`, as `DrivingASession` does. `ThenEventsOn` reads an archived stream as
@@ -96,7 +103,7 @@ The server project `server/Tuigether.Server` uses Vertical Slice Architecture. O
 Folder rules:
 
 - A feature folder (`Sessions/`, `Presence/`, `Driving/`, `Notes/`, `Goal/`, `Todos/`, `NoteList/`, `Git/`) holds one subfolder per use case. A use case folder holds the
-  endpoint, the message, the handler and the pure rule of that use case: `Driving/Rotate/`. Nest deeper when a use case
+  endpoint and the handler of that use case: `Driving/Rotate/`. Nest deeper when a use case
   has parts of its own.
 - Code that two or more slices use moves up to their lowest common folder. Use no partial classes to spread one type
   over several slices.
@@ -136,8 +143,8 @@ Module rules:
 - `Program.cs` keeps the host-wide settings: the options validation of `ServerOptions`, `TimeProvider`, the health
   checks, the Marten connection, the schema name, the correlation id, `IntegrateWithWolverine`,
   `UseLightweightSessions`, `AddWolverineHttp`, and in `UseWolverine` the service name, the assembly discovery,
-  `AutoApplyTransactions`, the durability mode, the polling interval, the `ConcurrencyException` retry and
-  `UseSignalR`.
+  `AutoApplyTransactions`, the relay of the user name, the durability mode, the polling interval, the
+  `ConcurrencyException` retry and `UseSignalR`.
 
 ## Specs
 

@@ -23,7 +23,7 @@ public static class SkipBreakEndpoint
         SessionCommand.InvokeAsync(bus, new SkipBreakBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record SkipBreakBy(SkipBreak Command, string User)
 {
     public Guid SessionId => Command.SessionId;

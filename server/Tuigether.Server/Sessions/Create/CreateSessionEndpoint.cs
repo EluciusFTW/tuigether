@@ -23,7 +23,7 @@ public static class CreateSessionEndpoint
         SessionCommand.InvokeAsync(bus, new CreateSessionBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <param name="User">The user name of the request.</param>
 public sealed record CreateSessionBy(CreateSession Command, string User);
 
 public static class CreateSessionHandler

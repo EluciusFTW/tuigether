@@ -10,9 +10,12 @@ public static class DrivingRules
     /// <summary>
     /// During a Break no Drive exists to pause, resume or skip. Only a rotation starts the next Drive.
     /// </summary>
+    public const string BreakRunsReason = "A Break runs.";
+
+    /// <inheritdoc cref="BreakRunsReason"/>
     public static Result<Session, string> CheckNoBreak(Session session) =>
         session.Timer == TimerPhase.Break
-            ? Result.Error("A Break runs.")
+            ? Result.Error(BreakRunsReason)
             : Result.Ok(session);
 
     /// <summary>

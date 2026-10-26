@@ -25,7 +25,7 @@ public static class SkipDriveEndpoint
         SessionCommand.InvokeAsync(bus, new SkipDriveBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record SkipDriveBy(SkipDrive Command, string User)
 {
     public Guid SessionId => Command.SessionId;

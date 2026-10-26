@@ -23,7 +23,7 @@ public static class CompleteTodoEndpoint
         SessionCommand.InvokeAsync(bus, new CompleteTodoBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record CompleteTodoBy(CompleteTodo Command, string User)
 {
     public Guid SessionId => Command.SessionId;

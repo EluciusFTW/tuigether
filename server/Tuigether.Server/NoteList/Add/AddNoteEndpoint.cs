@@ -23,7 +23,7 @@ public static class AddNoteEndpoint
         SessionCommand.InvokeAsync(bus, new AddNoteBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record AddNoteBy(AddNote Command, string User)
 {
     public Guid SessionId => Command.SessionId;

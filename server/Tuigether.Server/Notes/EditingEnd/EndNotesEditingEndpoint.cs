@@ -23,7 +23,7 @@ public static class EndNotesEditingEndpoint
         SessionCommand.InvokeAsync(bus, new EndNotesEditingBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record EndNotesEditingBy(EndNotesEditing Command, string User)
 {
     public Guid SessionId => Command.SessionId;

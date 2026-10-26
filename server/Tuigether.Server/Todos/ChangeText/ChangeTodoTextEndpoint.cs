@@ -23,7 +23,7 @@ public static class ChangeTodoTextEndpoint
         SessionCommand.InvokeAsync(bus, new ChangeTodoTextBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record ChangeTodoTextBy(ChangeTodoText Command, string User)
 {
     public Guid SessionId => Command.SessionId;

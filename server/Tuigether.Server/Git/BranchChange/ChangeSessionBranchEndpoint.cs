@@ -23,7 +23,7 @@ public static class ChangeSessionBranchEndpoint
         SessionCommand.InvokeAsync(bus, new ChangeSessionBranchBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record ChangeSessionBranchBy(ChangeSessionBranch Command, string User)
 {
     public Guid SessionId => Command.SessionId;

@@ -23,7 +23,7 @@ public static class ChangeNoteEndpoint
         SessionCommand.InvokeAsync(bus, new ChangeNoteBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record ChangeNoteBy(ChangeNote Command, string User)
 {
     public Guid SessionId => Command.SessionId;

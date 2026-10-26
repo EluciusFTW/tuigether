@@ -23,7 +23,7 @@ public static class EndGoalEditingEndpoint
         SessionCommand.InvokeAsync(bus, new EndGoalEditingBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record EndGoalEditingBy(EndGoalEditing Command, string User)
 {
     public Guid SessionId => Command.SessionId;

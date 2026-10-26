@@ -41,6 +41,29 @@ public static class SessionCommand
         };
 
     /// <summary>
+    /// The user of the request. <see cref="Requests.RequestCheckMiddleware"/> makes the user name header the user of
+    /// the request, and Wolverine relays it to the envelope.
+    /// </summary>
+    public static string UserOf(Envelope envelope) =>
+        envelope.UserName ?? throw new InvalidOperationException("The message has no user name.");
+
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) NotFound() =>
+        (new CommandOutcome.SessionNotFound(), [], null, []);
+
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Reject(string reason) =>
+        (new CommandOutcome.Rejected(reason), [], null, []);
+
+    /// <summary>
+    /// Appends <paramref name="events"/> to the Session stream, signals the change to every node and sends
+    /// <paramref name="messages"/>.
+    /// </summary>
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Accept(
+        Session session,
+        Events events,
+        OutgoingMessages? messages = null) =>
+        (new CommandOutcome.Accepted(), events, new BroadcastSessionChanged(session.Id), messages ?? []);
+
+    /// <summary>
     /// Appends the events of an accepted Command on an existing Session and signals the change to every node.
     /// </summary>
     public static (CommandOutcome, Events, BroadcastSessionChanged?) Decide(

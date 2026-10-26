@@ -23,7 +23,7 @@ public static class RecordWipPushEndpoint
         SessionCommand.InvokeAsync(bus, new RecordWipPushBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record RecordWipPushBy(RecordWipPush Command, string User)
 {
     public Guid SessionId => Command.SessionId;

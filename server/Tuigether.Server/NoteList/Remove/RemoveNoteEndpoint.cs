@@ -23,7 +23,7 @@ public static class RemoveNoteEndpoint
         SessionCommand.InvokeAsync(bus, new RemoveNoteBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record RemoveNoteBy(RemoveNote Command, string User)
 {
     public Guid SessionId => Command.SessionId;

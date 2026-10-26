@@ -23,7 +23,7 @@ public static class MoveTodoEndpoint
         SessionCommand.InvokeAsync(bus, new MoveTodoBy(command, userName), cancellation);
 }
 
-/// <inheritdoc cref="Driving.Rotate.RotateDriverBy"/>
+/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
 public sealed record MoveTodoBy(MoveTodo Command, string User)
 {
     public Guid SessionId => Command.SessionId;

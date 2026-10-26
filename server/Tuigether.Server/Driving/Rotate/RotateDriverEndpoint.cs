@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,29 +14,60 @@ namespace Tuigether.Server.Driving.Rotate;
 public static class RotateDriverEndpoint
 {
     [WolverinePost(CommandRoutes.RotateDriver)]
-    public static Task<IResult> Post(
-        RotateDriver command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new RotateDriverBy(command, userName), cancellation);
-}
-
-/// <param name="User">The user name of the request.</param>
-public sealed record RotateDriverBy(RotateDriver Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(RotateDriver command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class RotateDriverHandler
 {
     public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
-        RotateDriverBy request,
+        RotateDriver command,
         [WriteAggregate(Required = false)] Session? session,
+        Envelope envelope,
         TimeProvider clock)
     {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (command.CurrentDriver != session.Driver)
+        {
+            return SessionCommand.Reject($"Another Participant changed the Driver to {session.Driver ?? "nobody"}.");
+        }
+
+        if (!session.Participants.Contains(command.NextDriver))
+        {
+            return SessionCommand.Reject($"{command.NextDriver} is not a Participant of the Session.");
+        }
+
+        if (command.Duration <= TimeSpan.Zero)
+        {
+            return SessionCommand.Reject("A Drive needs a duration longer than zero.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
         var now = clock.GetUtcNow();
-        var (outcome, events, broadcast) = SessionCommand.Decide(session, current => RotateDriverRules.Rotate(current, request.Command, request.User, now));
-        return (outcome, events, broadcast, DrivingRules.ScheduleEnds(events, now));
+        Events events = [];
+
+        switch (session.Timer)
+        {
+            case TimerPhase.DriveRunning or TimerPhase.DrivePaused:
+                events.Add(new DriveSwitched(session.Id, user, now));
+                break;
+            case TimerPhase.Break:
+                events.Add(new BreakSkipped(session.Id, user, now));
+                break;
+        }
+
+        events.Add(new DriverChanged(session.Id, command.NextDriver, user, now));
+        events.Add(new DriveStarted(session.Id, command.NextDriver, now + command.Duration, user, now));
+
+        return SessionCommand.Accept(session, events, DrivingRules.ScheduleEnds(events, now));
     }
 }
