@@ -22,19 +22,27 @@ On first run the app creates a template config file at the platform default loca
 
 ```json
 {
+  "backend": "firebase",
   "firebaseUrl": "https://your-project.firebaseio.com",
   "firebaseSecret": "your-auth-secret",
+  "serverUrl": "http://localhost:5101",
+  "serverApiKey": "dev-api-key",
   "tuigetherUser": "your-username",
   "notificationsEnabled": true
 }
 ```
 
+`backend` is `firebase` (the default) or `server`. Each mode needs only its own settings.
+
 Environment variables override the config file:
 
 | Variable | Required | Description |
 |---|---|---|
-| `FIREBASE_URL` | yes | Firebase Realtime Database URL |
-| `FIREBASE_SECRET` | yes | Firebase auth secret |
+| `TUIGETHER_BACKEND` | no | Sync backend: `firebase` (default) or `server` |
+| `FIREBASE_URL` | in Firebase mode | Firebase Realtime Database URL |
+| `FIREBASE_SECRET` | in Firebase mode | Firebase auth secret |
+| `TUIGETHER_SERVER_URL` | in server mode | URL of one tuigether server node |
+| `TUIGETHER_SERVER_API_KEY` | in server mode | API key of the tuigether server |
 | `TUIGETHER_USER` | yes | Username shown to other participants |
 | `TUIGETHER_AVATAR` | no | Preferred avatar name (random if unset or unknown) |
 | `TUIGETHER_LOG_DIR` | no | Directory for daily log files (default: `./logs`) |
@@ -143,13 +151,13 @@ KeyPressed 's'
 InputMsg(KeyPressed 's')
     │  dispatch to the session view
     ▼  SessionView.handleKey → JourneyKeys.handleKey
-SessionViewMsg(JourneyMsg(TimerMsg Start))
+SessionViewMsg(JourneyMsg(TimerMsg Resume))
     │
     ▼  SessionView.update → Journey.update → Timer.update
-TimerMsg Start
+TimerMsg Resume
     │
     ▼  Timer.update
-  Model { state = Running }  +  Cmd (write state to Firebase)
+  Model { state = Running }  +  Cmd (Backend.Driving.ResumeDrive)
                                       │
                                       ▼ (async resolves)
                                  TimerMsg StateSaved

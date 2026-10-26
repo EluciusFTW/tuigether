@@ -3,7 +3,6 @@ module Timer
 open System
 open Dependencies
 open Elmish
-open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open SpectreTuff
@@ -30,17 +29,18 @@ type Model = {
   ConnectedUsers: string list
   UserAvatars: Map<string, Color>
   TickEpoch: int
-  Persistence: Firebase.Persistence
-  // Absolute instant (unix ms) the running Work countdown reaches zero. Drives
-  // the displayed Remaining so all clients agree regardless of tick jitter.
+  Backend: Backend.Backend
+  SessionId: string
+  // Absolute instant (unix ms) the running Work countdown or the shared Break
+  // reaches zero. Drives the displayed Remaining so all clients agree
+  // regardless of tick jitter. A Break without it counts down locally.
   EndsAt: int64 option
   // Local user, used to attribute auto-finish history to the driver's client only.
   CurrentUser: string
 }
 
 type Msg =
-  | Start
-  | Stop
+  | Resume
   | Pause
   | Tick of int
   | Reset
@@ -53,9 +53,8 @@ type Msg =
   | BreakTick
   | BreakFinished
   | SessionUpdated of string list * string option * Map<string, Color>
-  | RemoteStateLoaded of Session.TimerState option
+  | RemoteStateLoaded of Backend.TimerSnapshot option
   | StateSaved
-  | HistoryAppended
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -74,7 +73,7 @@ let private breakTickCmd = Cmd.OfAsync.perform (fun () -> async { do! Async.Slee
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 
-let init (client: FirebaseClient) (sessionId: string) (currentUser: string) = {
+let init (backend: Backend.Backend) (sessionId: string) (currentUser: string) = {
   Remaining = workDuration
   Phase = Work
   State = Idle
@@ -82,10 +81,8 @@ let init (client: FirebaseClient) (sessionId: string) (currentUser: string) = {
   ConnectedUsers = []
   UserAvatars = Map.empty
   TickEpoch = 0
-  Persistence = {
-    Client = client
-    SessionId = sessionId
-  }
+  Backend = backend
+  SessionId = sessionId
   EndsAt = None
   CurrentUser = currentUser
 }
@@ -98,92 +95,71 @@ let resetForDriver (previous: Model) (driver: string option) (users: string list
   ConnectedUsers = users
   UserAvatars = avatars
   TickEpoch = previous.TickEpoch + 1
-  Persistence = previous.Persistence
+  Backend = previous.Backend
+  SessionId = previous.SessionId
   EndsAt = None
   CurrentUser = previous.CurrentUser
 }
 
-// ─── Persistence ─────────────────────────────────────────────────────────────
+// ─── Sync ────────────────────────────────────────────────────────────────────
 
 let private nowMs () =
   Clock.nowMs ()
 
-let private toTimerState (model: Model) : Session.TimerState = {
+let toSnapshot (model: Model) : Backend.TimerSnapshot = {
+  Phase =
+    match model.State with
+    | Running -> Backend.DriveRunning
+    | Paused -> Backend.DrivePaused
+    | Breaking _ -> Backend.Break
+    | Idle
+    | Flashing _ -> Backend.Idle
   RemainingSeconds = int model.Remaining.TotalSeconds
-  IsRunning = model.State = Running
   EndsAt = model.EndsAt |> Option.defaultValue 0L
 }
 
-let private saveCmd (model: Model) : Cmd<Msg> =
+let private untilMs (endsAt: int64) =
+  TimeSpan.FromMilliseconds(float (max 0L (endsAt - nowMs ())))
+
+let private driveCmd
+  (intention: string -> string -> string option -> Backend.TimerSnapshot -> Async<unit>)
+  (model: Model)
+  : Cmd<Msg> =
   Cmd.OfAsync.perform
-    (fun () -> Firebase.Timer.save model.Persistence.Client model.Persistence.SessionId (toTimerState model))
+    (fun () -> intention model.SessionId model.CurrentUser model.ActiveDriver (toSnapshot model))
     ()
     (fun () -> StateSaved)
 
-// Append a structured drive-history event. Callers must ensure exactly one client
-// writes a given event (local user actions are inherently single-writer; auto-finish
-// is gated to the active driver's client) so the append-only log holds no duplicates.
-let private historyCmd (model: Model) (eventType: Session.DriveEventType) : Cmd<Msg> =
-  match model.ActiveDriver with
-  | Some driver ->
-    Cmd.OfAsync.perform
-      (fun () ->
-        Firebase.History.append model.Persistence.Client model.Persistence.SessionId {
-          Session.DriveEvent.Type = Session.DriveEventType.toString eventType
-          Session.DriveEvent.Driver = driver
-          Session.DriveEvent.By = model.CurrentUser
-          Session.DriveEvent.At = nowMs ()
-        })
-      ()
-      (fun () -> HistoryAppended)
-  | None -> Cmd.none
+let private timerCmd (intention: string -> Backend.TimerSnapshot -> Async<unit>) (model: Model) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> intention model.SessionId (toSnapshot model)) () (fun () -> StateSaved)
+
+let private running (model: Model) =
+  let epoch = model.TickEpoch + 1
+
+  {
+    model with
+        State = Running
+        TickEpoch = epoch
+        EndsAt = Some(nowMs () + int64 model.Remaining.TotalMilliseconds)
+  }
+
+// Starts the Drive of the next Driver. The caller proposes `toSnapshot` of the result with `IDriving.RotateDriver`.
+let startDrive (deps: Dependencies) (model: Model) : Model * Cmd<Msg> =
+  deps.Notify "Work started!"
+  let m = running model
+  m, tickCmd m.TickEpoch
 
 // ─── Update ──────────────────────────────────────────────────────────────────
 
 let update (deps: Dependencies) msg model =
   match msg with
-  | Start ->
+  | Resume ->
     match model.State with
-    | Idle
     | Paused ->
-      let resuming = model.State = Paused
-
-      match model.State with
-      | Idle -> deps.Notify "Work started!"
-      | _ -> deps.Notify "Work resumed"
-
-      let epoch = model.TickEpoch + 1
-      let endsAt = nowMs () + int64 model.Remaining.TotalMilliseconds
-
-      let m = {
-        model with
-            State = Running
-            TickEpoch = epoch
-            EndsAt = Some endsAt
-      }
-
-      // A fresh start (from Idle) carries no history here: the only path to it is
-      // Journey.SwitchDriver (local-only), which logs the Started event. But a
-      // resume (from Paused) is local-only too — RemoteStateLoaded no longer
-      // dispatches Start — so log Resumed to close out the paused interval.
-      let logCmd =
-        match resuming with
-        | true -> historyCmd model Session.DriveEventType.Resumed
-        | false -> Cmd.none
-
-      m, Cmd.batch [ tickCmd epoch; saveCmd m; logCmd ]
+      deps.Notify "Work resumed"
+      let m = running model
+      m, Cmd.batch [ tickCmd m.TickEpoch; driveCmd model.Backend.Driving.ResumeDrive m ]
     | _ -> model, []
-  | Stop ->
-    deps.Notify "Timer stopped"
-
-    let m = {
-      model with
-          State = Idle
-          TickEpoch = model.TickEpoch + 1
-          EndsAt = None
-    }
-
-    m, Cmd.batch [ saveCmd m; historyCmd model Session.DriveEventType.Stopped ]
   | Pause ->
     match model.State with
     | Running ->
@@ -196,7 +172,7 @@ let update (deps: Dependencies) msg model =
             EndsAt = None
       }
 
-      m, Cmd.batch [ saveCmd m; historyCmd model Session.DriveEventType.Paused ]
+      m, driveCmd model.Backend.Driving.PauseDrive m
     | _ -> model, []
   | Tick epoch when epoch <> model.TickEpoch -> model, []
   | Tick _ ->
@@ -229,10 +205,14 @@ let update (deps: Dependencies) msg model =
     // duplicate log entries. The drift-free EndsAt makes that instant agree.
     let logCmd =
       match model.ActiveDriver with
-      | Some driver when driver = model.CurrentUser -> historyCmd model Session.DriveEventType.Finished
+      | Some driver when driver = model.CurrentUser ->
+        Cmd.OfAsync.perform
+          (fun () -> model.Backend.Driving.RecordFinishedDrive model.SessionId model.CurrentUser driver)
+          ()
+          (fun () -> StateSaved)
       | _ -> Cmd.none
 
-    m, Cmd.batch [ flashTickCmd; saveCmd m; logCmd ]
+    m, Cmd.batch [ flashTickCmd; timerCmd model.Backend.Driving.EndDrive m; logCmd ]
   | SkipTimer ->
     match model.State with
     | Running
@@ -246,7 +226,7 @@ let update (deps: Dependencies) msg model =
             EndsAt = None
       }
 
-      m, Cmd.batch [ flashTickCmd; saveCmd m; historyCmd model Session.DriveEventType.Skipped ]
+      m, Cmd.batch [ flashTickCmd; driveCmd model.Backend.Driving.SkipDrive m ]
     | _ -> model, []
   | FlashTick ->
     match model.State with
@@ -254,17 +234,21 @@ let update (deps: Dependencies) msg model =
     | Flashing _ -> model, Cmd.ofMsg StartBreak
     | _ -> model, []
   | StartBreak ->
+    // A shared Break that arrived during the flash sets EndsAt.
     {
       model with
           State = Breaking 0
           Phase = Break
-          Remaining = breakDuration
+          Remaining = model.EndsAt |> Option.map untilMs |> Option.defaultValue breakDuration
     },
     breakTickCmd
   | BreakTick ->
     match model.State with
     | Breaking frame ->
-      let next = model.Remaining - TimeSpan.FromSeconds 0.5
+      let next =
+        match model.EndsAt with
+        | Some endsAt -> untilMs endsAt
+        | None -> model.Remaining - TimeSpan.FromSeconds 0.5
 
       if next <= TimeSpan.Zero then
         { model with Remaining = TimeSpan.Zero }, Cmd.ofMsg BreakFinished
@@ -287,7 +271,7 @@ let update (deps: Dependencies) msg model =
           EndsAt = None
     }
 
-    m, saveCmd m
+    m, timerCmd model.Backend.Driving.EndBreak m
   | SkipPause ->
     match model.State with
     | Breaking _ ->
@@ -301,7 +285,7 @@ let update (deps: Dependencies) msg model =
             EndsAt = None
       }
 
-      m, saveCmd m
+      m, timerCmd model.Backend.Driving.SkipBreak m
     | _ -> model, []
   | Reset ->
     match model.State with
@@ -330,51 +314,100 @@ let update (deps: Dependencies) msg model =
     // Start/Pause here: those would recompute EndsAt and re-save, pushing the
     // deadline later on every client and echoing writes back and forth. Instead
     // we take the remote EndsAt verbatim and only spin up a local display tick.
-    let remainingFromDeadline () =
-      TimeSpan.FromMilliseconds(float (max 0L (state.EndsAt - nowMs ())))
-
-    match state.IsRunning, model.State with
-    | true, (Idle | Paused) ->
+    let runDrive () =
       let epoch = model.TickEpoch + 1
 
       {
         model with
             State = Running
+            Phase = Work
             EndsAt = Some state.EndsAt
-            Remaining = remainingFromDeadline ()
+            Remaining = untilMs state.EndsAt
             TickEpoch = epoch
       },
       tickCmd epoch
-    | true, Running ->
-      // Already ticking; just re-anchor to the remote deadline in case it moved.
-      {
-        model with
-            EndsAt = Some state.EndsAt
-            Remaining = remainingFromDeadline ()
-      },
-      Cmd.none
-    | false, Running ->
+
+    let pauseDrive () =
       {
         model with
             State = Paused
+            Phase = Work
             EndsAt = None
             Remaining = TimeSpan.FromSeconds(float state.RemainingSeconds)
             TickEpoch = model.TickEpoch + 1
       },
       Cmd.none
-    | false, (Idle | Paused) ->
+
+    match state.Phase, model.State with
+    | Backend.DriveRunning, (Idle | Paused) -> runDrive ()
+    | Backend.DriveRunning, Running ->
+      // Already ticking; just re-anchor to the remote deadline in case it moved.
+      {
+        model with
+            EndsAt = Some state.EndsAt
+            Remaining = untilMs state.EndsAt
+      },
+      Cmd.none
+    // Another Participant started the next Drive during the shared Break. A past EndsAt belongs to the Drive that
+    // just ended.
+    | Backend.DriveRunning, (Flashing _ | Breaking _) when model.EndsAt.IsSome && state.EndsAt > nowMs () -> runDrive ()
+    | (Backend.Stopped | Backend.DrivePaused), Running
+    | Backend.DrivePaused, (Idle | Flashing _ | Breaking _) -> pauseDrive ()
+    | (Backend.Stopped | Backend.DrivePaused), (Idle | Paused) ->
       {
         model with
             Remaining = TimeSpan.FromSeconds(float state.RemainingSeconds)
       },
       Cmd.none
+    // A snapshot can repeat a Break that this Client already counted down to its end.
+    | Backend.Break, (Idle | Running | Paused) when state.EndsAt > nowMs () ->
+      match model.State with
+      | Running
+      | Paused -> deps.Notify "Drive ended — break started!"
+      | _ -> ()
+
+      {
+        model with
+            State = Breaking 0
+            Phase = Break
+            EndsAt = Some state.EndsAt
+            Remaining = untilMs state.EndsAt
+            TickEpoch = model.TickEpoch + 1
+      },
+      breakTickCmd
+    // StartBreak counts the Break from EndsAt when the flash ends.
+    | Backend.Break, (Flashing _ | Breaking _) ->
+      {
+        model with
+            EndsAt = Some state.EndsAt
+      },
+      Cmd.none
+    | Backend.Idle, (Running | Paused | Flashing _ | Breaking _) ->
+      match model.State with
+      | Breaking _ -> deps.Notify "Break over!"
+      | _ -> ()
+
+      {
+        model with
+            State = Idle
+            Phase = Work
+            Remaining = workDuration
+            EndsAt = None
+            TickEpoch = model.TickEpoch + 1
+      },
+      Cmd.none
     | _ -> model, []
   | RemoteStateLoaded None -> model, []
   | StateSaved -> model, []
-  | HistoryAppended -> model, []
+
+// Only a backend with a shared Break sets EndsAt during a Break, see `Backend.Break`.
+let isSharedBreak (model: Model) =
+  match model.State, model.EndsAt with
+  | Breaking _, Some _ -> true
+  | _ -> false
 
 let subscriptions (model: Model) =
-  Firebase.Timer.subscription model.Persistence.Client model.Persistence.SessionId RemoteStateLoaded
+  model.Backend.Driving.Subscription model.SessionId |> Subs.map RemoteStateLoaded
 
 // ─── Widget ──────────────────────────────────────────────────────────────────
 

@@ -2,7 +2,6 @@ module SessionInfo
 
 open System
 open Elmish
-open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open SpectreTuff.Keymap
@@ -91,8 +90,12 @@ type InputMode =
   | SyncPopup of SyncPopupStage
   | SwitchPopup of SwitchPopupStage
 
+type GoalEditor =
+  | InlineEditor
+  | PopupEditor
+
 type Model = {
-  Client: FirebaseClient
+  Backend: Backend.Backend
   SessionId: string
   User: string
   StartedAt: int64
@@ -105,6 +108,8 @@ type Model = {
   // of truth for persistence and non-editing display.
   Editor: TextBoxWidget option
   Lock: Locking.Lock option
+  // An acquire of the Edit lock is on its way. The editor opens when the backend accepts it.
+  AwaitingEditLock: bool
   GitBranch: string
   LocalGitBranch: string
   GitRepo: string
@@ -115,6 +120,7 @@ type Model = {
 
 type Msg =
   | EnterInsert
+  | EditLockAnswered of editor: GoalEditor * proposed: Locking.Lock * Result<unit, string>
   | ExitInsert
   | Edit of TextEditing.EditAction
   | MaybeSaveGoal of int
@@ -191,8 +197,8 @@ let private lockFromData (data: Session.Data) =
       LockedAt = data.GoalLockedAt
     }
 
-let init (client: FirebaseClient) (sessionId: string) (user: string) (sessionData: Session.Data) = {
-  Client = client
+let init (backend: Backend.Backend) (sessionId: string) (user: string) (sessionData: Session.Data) = {
+  Backend = backend
   SessionId = sessionId
   User = user
   StartedAt = sessionData.StartedAt
@@ -205,6 +211,7 @@ let init (client: FirebaseClient) (sessionId: string) (user: string) (sessionDat
   InputMode = Normal
   Editor = None
   Lock = lockFromData sessionData
+  AwaitingEditLock = false
   GitBranch = branchFromData sessionData
   LocalGitBranch = Git.readCurrentBranch ()
   GitRepo = repoFromData sessionData
@@ -328,6 +335,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     match key.Key with
     | ConsoleKey.Escape -> Some ExitInsert
     | _ -> TextEditing.keyToAction true key |> Option.map Edit
+  | Normal when model.AwaitingEditLock -> None
   | Normal -> KeyBinding.handleKey normalBindings key model
   | GoalPopup ->
     // Single-line: Enter and Escape both close.
@@ -379,7 +387,7 @@ let handlePaste (text: string) (model: Model) : Msg option =
 
 let capturesInput (model: Model) =
   match model.InputMode with
-  | Normal -> false
+  | Normal -> model.AwaitingEditLock
   | _ -> true
 
 let keyMap (model: Model) =
@@ -402,16 +410,16 @@ let keyMap (model: Model) =
 
   KeyBinding.toKeyMap bindings model
 
-let private saveGoalCmd (model: Model) : Cmd<Msg> =
+let private saveGoalDraftCmd (model: Model) : Cmd<Msg> =
   Cmd.OfAsync.perform
-    (fun () -> Firebase.Sessions.saveGoal model.Client model.SessionId model.GoalContent)
+    (fun () -> model.Backend.Goal.SaveDraft model.SessionId model.GoalContent model.Lock)
     ()
     (fun () -> StateSaved)
 
 // Debounce goal writes: each typed character bumps a token and schedules a
 // MaybeSaveGoal for that token after a short idle delay. The actual save only
 // fires if the token still matches the latest one — so a burst of fast
-// keystrokes collapses into a single Firebase write at the end.
+// keystrokes collapses into a single write at the end.
 let private scheduleGoalSave (token: int) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> async { do! Async.Sleep goalDebounceMs }) () (fun () -> MaybeSaveGoal token)
 
@@ -421,18 +429,13 @@ let private scheduleGoalSave (token: int) : Cmd<Msg> =
 let private scheduleAutoExit (token: int) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> async { do! Async.Sleep autoExitInsertMs }) () (fun () -> MaybeAutoExitInsert token)
 
-let private saveGoalLockCmd (model: Model) : Cmd<Msg> =
-  match model.Lock with
-  | Some lock ->
-    Cmd.OfAsync.perform
-      (fun () -> Firebase.Sessions.saveGoalLock model.Client model.SessionId lock.Owner lock.LockedAt)
-      ()
-      (fun () -> StateSaved)
-  | None -> []
+// The server backend shows its rejection. A Firebase rejection stays silent: the key hint shows the holder.
+let private acquireGoalLockCmd (model: Model) (editor: GoalEditor) (lock: Locking.Lock) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Goal.AcquireEditLock model.SessionId lock model.Lock) () (fun answer ->
+    EditLockAnswered(editor, lock, answer))
 
-let private releaseGoalLockCmd (model: Model) : Cmd<Msg> =
-  Cmd.OfAsync.perform (fun () -> Firebase.Sessions.releaseGoalLock model.Client model.SessionId) () (fun () ->
-    StateSaved)
+let private endGoalEditCmd (model: Model) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Goal.EndEdit model.SessionId model.GoalContent) () (fun () -> StateSaved)
 
 // Where a new branch can grow out of: the branch checked out now, the repo's default
 // branch, and the newest release branches. Duplicates of the current branch are left
@@ -496,15 +499,12 @@ let private resetToUpstreamCmd () : Cmd<Msg> =
 let private wipSyncCmd (title: string) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> Git.wipSync title) () WipSyncCompleted
 
-let private saveWipPushCmd (model: Model) (timestamp: int64) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> Firebase.Sessions.saveWipPush model.Client model.SessionId model.User timestamp)
-    ()
-    (fun () -> StateSaved)
-
-let private saveGitBranchCmd (model: Model) (branch: string) : Cmd<Msg> =
-  Cmd.OfAsync.perform (fun () -> Firebase.Sessions.saveGitBranch model.Client model.SessionId branch) () (fun () ->
+let private recordWipPushCmd (model: Model) (timestamp: int64) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Git.RecordWipPush model.SessionId model.User timestamp) () (fun () ->
     StateSaved)
+
+let private changeBranchCmd (model: Model) (branch: string) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Git.ChangeBranch model.SessionId branch) () (fun () -> StateSaved)
 
 let private listBranchesCmd () : Cmd<Msg> =
   Cmd.OfAsync.perform Git.listBranches () BranchesLoaded
@@ -576,37 +576,75 @@ let private withFilter (filter: string) (model: Model) =
 
 let private goalLook = Look.fromColor Color.Yellow |> Look.withDecorations [ Decoration.Italic ]
 
-let update msg model =
+// The popup opens on an empty Goal. The server sends the Goal after the open, so it can arrive after the popup. Data
+// with the own lock is newer than the acquire, and its Goal is empty or the echo of a Firebase draft.
+let private popupMissedGoal (model: Model) (data: Session.Data) =
+  match model.InputMode, model.Editor with
+  | GoalPopup, Some editor ->
+    editor.Text.Trim() = ""
+    && not (String.IsNullOrWhiteSpace data.Goal)
+    && data.GoalLockOwner <> model.User
+  | _ -> false
+
+let rec update msg model =
   match msg with
   | EnterInsert ->
-    match isLockedByOther model with
-    | true -> model, []
-    | false ->
-      let activityToken = model.InsertActivityToken + 1
-
+    match model.AwaitingEditLock, model.InputMode with
+    | false, Normal ->
       let lock = {
         Owner = model.User
         LockedAt = nowMs ()
       }
 
-      // Build the multi-line editor from the current goal, caret at the end.
-      let editor =
-        textBox model.GoalContent
-        |> withMode TextBoxMode.MultiLine
-        |> TextBoxes.withLook goalLook
-        |> focused
+      { model with AwaitingEditLock = true }, acquireGoalLockCmd model InlineEditor lock
+    | _ -> model, []
+  | EditLockAnswered(_, _, Error _) -> { model with AwaitingEditLock = false }, []
+  | EditLockAnswered(InlineEditor, lock, Ok()) when model.InputMode = Normal ->
+    let activityToken = model.InsertActivityToken + 1
 
-      editor.MoveToEnd()
+    // Build the multi-line editor from the current goal, caret at the end.
+    let editor =
+      textBox model.GoalContent
+      |> withMode TextBoxMode.MultiLine
+      |> TextBoxes.withLook goalLook
+      |> focused
 
-      let updated = {
-        model with
-            InputMode = Insert
-            InsertActivityToken = activityToken
-            Lock = Some lock
-            Editor = Some editor
-      }
+    editor.MoveToEnd()
 
-      updated, Cmd.batch [ saveGoalLockCmd updated; scheduleAutoExit activityToken ]
+    {
+      model with
+          InputMode = Insert
+          AwaitingEditLock = false
+          InsertActivityToken = activityToken
+          Lock = Some lock
+          Editor = Some editor
+    },
+    scheduleAutoExit activityToken
+  | EditLockAnswered(PopupEditor, lock, Ok()) when model.InputMode = Normal && model.GoalContent.Trim() = "" ->
+    let activityToken = model.InsertActivityToken + 1
+
+    // Single-line editor for the popup (goal is empty when this opens).
+    let editor =
+      textBox model.GoalContent
+      |> withMode TextBoxMode.SingleLine
+      |> withPlaceholder "what are you working on?"
+      |> focused
+
+    editor.MoveToEnd()
+
+    {
+      model with
+          InputMode = GoalPopup
+          AwaitingEditLock = false
+          InsertActivityToken = activityToken
+          Lock = Some lock
+          Editor = Some editor
+    },
+    scheduleAutoExit activityToken
+  // The Goal arrived, or another popup opened, while the acquire was on its way. The unchanged text releases the lock.
+  | EditLockAnswered(_, _, Ok()) ->
+    let released = { model with AwaitingEditLock = false }
+    released, endGoalEditCmd released
   | ExitInsert ->
     match model.InputMode with
     | Insert ->
@@ -628,7 +666,7 @@ let update msg model =
             Lock = None
       }
 
-      updated, Cmd.batch [ saveGoalCmd updated; releaseGoalLockCmd updated ]
+      updated, endGoalEditCmd updated
     | _ -> model, []
   | Edit action ->
     match model.Editor with
@@ -668,12 +706,25 @@ let update msg model =
         | other -> other
 
       let updated = { model with Lock = refreshedLock }
-      updated, Cmd.batch [ saveGoalCmd updated; saveGoalLockCmd updated ]
+      updated, saveGoalDraftCmd updated
     | false -> model, []
-  | MaybeAutoExitInsert token ->
-    match model.InputMode = Insert && token = model.InsertActivityToken with
-    | true -> model, Cmd.ofMsg ExitInsert
-    | false -> model, []
+  | MaybeAutoExitInsert token when token = model.InsertActivityToken ->
+    match model.InputMode with
+    | Insert -> model, Cmd.ofMsg ExitInsert
+    | GoalPopup -> model, Cmd.ofMsg CloseGoalPopup
+    | _ -> model, []
+  | MaybeAutoExitInsert _ -> model, []
+  // The popup closes, so that its Esc does not clear the Goal. The unchanged text releases the lock.
+  | SessionDataUpdated data when popupMissedGoal model data ->
+    let closed = {
+      model with
+          InputMode = Normal
+          Editor = None
+          GoalContent = data.Goal
+    }
+
+    let updated, cmd = update (SessionDataUpdated data) closed
+    updated, Cmd.batch [ endGoalEditCmd closed; cmd ]
   | SessionDataUpdated data ->
     // While the user is actively typing, ignore the goal echo from the remote —
     // applying it would clobber characters typed since the in-flight save was
@@ -870,7 +921,7 @@ let update msg model =
           LocalGitBranch = Git.readCurrentBranch ()
     }
 
-    updated, saveGitBranchCmd updated name
+    updated, changeBranchCmd updated name
   | BranchCreateCompleted(_, Error err) ->
     // Keep the popup's parts as they are — a retry has to rebuild the same name.
     let inputMode =
@@ -1010,7 +1061,7 @@ let update msg model =
 
     // The checkout succeeded either way, so the session branch moves even when
     // there are notes to show.
-    updated, saveGitBranchCmd updated name
+    updated, changeBranchCmd updated name
   | DismissSwitchPopup ->
     match model.InputMode with
     | SwitchPopup _ -> { model with InputMode = Normal }, []
@@ -1091,7 +1142,7 @@ let update msg model =
           LastSeenWipAt = timestamp
     }
 
-    updated, saveWipPushCmd updated timestamp
+    updated, recordWipPushCmd updated timestamp
   | WipSyncCompleted(Error err) ->
     {
       model with
@@ -1104,30 +1155,15 @@ let update msg model =
     | SyncPopup _ -> { model with InputMode = Normal }, []
     | _ -> model, []
   | MaybeShowGoalPopup ->
-    match model.InputMode, model.GoalContent.Trim() = "", isLockedByOther model with
-    | Normal, true, false ->
+    // The popup opens on its own, so it does not try the lock of a holder that the Client shows.
+    match model.InputMode, model.AwaitingEditLock, model.GoalContent.Trim() = "", isLockedByOther model with
+    | Normal, false, true, false ->
       let lock = {
         Owner = model.User
         LockedAt = nowMs ()
       }
 
-      // Single-line editor for the popup (goal is empty when this opens).
-      let editor =
-        textBox model.GoalContent
-        |> withMode TextBoxMode.SingleLine
-        |> withPlaceholder "what are you working on?"
-        |> focused
-
-      editor.MoveToEnd()
-
-      let updated = {
-        model with
-            InputMode = GoalPopup
-            Lock = Some lock
-            Editor = Some editor
-      }
-
-      updated, saveGoalLockCmd updated
+      { model with AwaitingEditLock = true }, acquireGoalLockCmd model PopupEditor lock
     | _ -> model, []
   | CloseGoalPopup ->
     match model.InputMode with
@@ -1148,7 +1184,7 @@ let update msg model =
             Lock = None
       }
 
-      updated, Cmd.batch [ saveGoalCmd updated; releaseGoalLockCmd updated ]
+      updated, endGoalEditCmd updated
     | _ -> model, []
 
 let subscriptions (_model: Model) = []

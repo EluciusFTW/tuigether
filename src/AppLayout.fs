@@ -12,6 +12,8 @@ type Slot =
   | Keys
   | Log
   | Help
+  | Footer
+  | Connection
   | PanelInner
 
 module Slot =
@@ -23,6 +25,8 @@ module Slot =
     | Keys -> "keys"
     | Log -> "log"
     | Help -> "help"
+    | Footer -> "footer"
+    | Connection -> "connection"
     | PanelInner -> "panel-inner"
 
 let private named slot =
@@ -32,7 +36,8 @@ let panelInnerLayout =
   named PanelInner
   |> splitHorizontally [| named Content; named Keys |> withFixedSize (Some 1) |]
 
-let mainLayout (logVisible: bool) =
+// `connectionWidth` is 0 when the footer shows no connection state.
+let mainLayout (logVisible: bool) (connectionWidth: int) =
   named Main
   |> splitHorizontally [|
     named Top
@@ -44,7 +49,15 @@ let mainLayout (logVisible: bool) =
           | true -> show
           | false -> hide)
     |]
-    named Help |> withFixedSize (Some 1)
+    named Footer
+    |> withFixedSize (Some 1)
+    |> splitVertically [|
+      named Help
+      // Spectre.Tui rejects a fixed size below 1.
+      match connectionWidth with
+      | width when width < 1 -> named Connection |> hide
+      | width -> named Connection |> withFixedSize (Some width)
+    |]
   |]
 
 /// Typed slot lookup over a layout tree: resolves a Slot to its rendering

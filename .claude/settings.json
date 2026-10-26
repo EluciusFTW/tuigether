@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build:*)",
+      "Bash(dotnet fantomas:*)",
+      "Bash(dotnet tool restore:*)"
+    ],
+    "ask": [
+      "Bash(dotnet run:*)",
+      "Bash(scripts/install.sh:*)",
+      "Bash(./scripts/install.sh:*)"
+    ]
+  }
+}

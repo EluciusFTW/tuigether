@@ -2,7 +2,6 @@ module DriveLog
 
 open System
 open Elmish
-open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open SpectreTuff
@@ -16,7 +15,8 @@ open SpectreTuff.Widgets
 type Model = {
   Events: Session.DriveEvent list
   SelectedIndex: int
-  Persistence: Firebase.Persistence
+  Backend: Backend.Backend
+  SessionId: string
 }
 
 type Msg =
@@ -24,13 +24,11 @@ type Msg =
   | Up
   | Down
 
-let init (client: FirebaseClient) (sessionId: string) = {
+let init (backend: Backend.Backend) (sessionId: string) = {
   Events = []
   SelectedIndex = 0
-  Persistence = {
-    Client = client
-    SessionId = sessionId
-  }
+  Backend = backend
+  SessionId = sessionId
 }
 
 let update msg model =
@@ -74,7 +72,7 @@ let update msg model =
     []
 
 let subscriptions (model: Model) =
-  Firebase.History.subscription model.Persistence.Client model.Persistence.SessionId RemoteLoaded
+  model.Backend.DriveHistory.Subscription model.SessionId |> Subs.map RemoteLoaded
 
 // ─── Segment reconstruction ──────────────────────────────────────────────────
 

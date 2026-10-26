@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <BobcatVersion>1.0.0-rc.3</BobcatVersion>
+    <WolverineBobcatVersion>6.51.3-alpha.1</WolverineBobcatVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" PrivateAssets="all" />
+    <PackageReference Include="Bobcat" Version="[$(BobcatVersion)]" />
+    <PackageReference Include="Bobcat.Generators" Version="[$(BobcatVersion)]" PrivateAssets="all" />
+    <PackageReference Include="Bobcat.Xunit" Version="[$(BobcatVersion)]" />
+    <PackageReference Include="WolverineFx.Bobcat" Version="[$(WolverineBobcatVersion)]" />
+    <PackageReference Include="WolverineFx.Bobcat.Http" Version="[$(WolverineBobcatVersion)]" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.13" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.16.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Tuigether.Server/Tuigether.Server.csproj" />
+  </ItemGroup>
+
+</Project>

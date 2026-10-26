@@ -3,7 +3,6 @@ module Journey
 open System
 open Dependencies
 open Elmish
-open Firebase.Database
 open Spectre.Console
 open Spectre.Tui
 open SpectreTuff
@@ -40,17 +39,18 @@ type Model = {
   ActiveDriver: User option
   CurrentUser: User
   Timer: Timer.Model
-  Persistence: Firebase.Persistence
+  SessionId: string
+  Backend: Backend.Backend
 }
 
 type Msg =
   | UpdateSession of Session.Data
   | RemoteUserChanged of user: string * presence: Session.UserPresence
   | RemoteUserRemoved of user: string
-  | SetActiveDriver of string option
-  | ActiveDriverSaved
+  | ClearDriver
+  | DriverCleared
   | SwitchDriver
-  | DriveLogged
+  | DriverRotated
   | TimerMsg of Timer.Msg
 
 let private upsertUser (userName: string) (presence: Session.UserPresence) (model: Model) : Model =
@@ -94,7 +94,7 @@ let private removeUser (userName: string) (model: Model) : Model =
             | other -> other
     }
 
-let init (client: FirebaseClient) (sessionId: string) (currentUser: string) (avatarName: string) (data: Session.Data) =
+let init (deps: Dependencies) (sessionId: string) (currentUser: string) (avatarName: string) (data: Session.Data) =
   let me = {
     Name = currentUser
     Color = colorByName avatarName
@@ -111,32 +111,10 @@ let init (client: FirebaseClient) (sessionId: string) (currentUser: string) (ava
           Color = colorByName data.ActiveDriver
         }
     CurrentUser = me
-    Timer = Timer.init client sessionId currentUser
-    Persistence = {
-      Client = client
-      SessionId = sessionId
-    }
+    Timer = Timer.init deps.Backend sessionId currentUser
+    SessionId = sessionId
+    Backend = deps.Backend
   }
-
-let private activeDriverCmd (model: Model) (driver: string option) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> Firebase.Sessions.setActiveDriver model.Persistence.Client model.Persistence.SessionId driver)
-    ()
-    (fun () -> ActiveDriverSaved)
-
-// SwitchDriver only ever runs on the client that pressed the key, so these appends
-// are inherently single-writer and the drive-history log stays duplicate-free.
-let private logDriveCmd (model: Model) (eventType: Session.DriveEventType) (driver: string) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () ->
-      Firebase.History.append model.Persistence.Client model.Persistence.SessionId {
-        Session.DriveEvent.Type = Session.DriveEventType.toString eventType
-        Session.DriveEvent.Driver = driver
-        Session.DriveEvent.By = model.CurrentUser.Name
-        Session.DriveEvent.At = Clock.nowMs ()
-      })
-    ()
-    (fun () -> DriveLogged)
 
 let private feedTimer (deps: Dependencies) (model: Model) : Timer.Model * Cmd<Msg> =
   let connectedUsers = model.Users |> List.map (fun u -> u.Name)
@@ -165,9 +143,11 @@ let update (deps: Dependencies) msg model =
   | RemoteUserChanged(user, presence) -> upsertUser user presence model, []
   | RemoteUserRemoved user -> removeUser user model, []
 
-  | SetActiveDriver driver -> model, activeDriverCmd model driver
-  | ActiveDriverSaved -> model, []
-  | DriveLogged -> model, []
+  | ClearDriver ->
+    model,
+    Cmd.OfAsync.perform (fun () -> model.Backend.Driving.ClearDriver model.SessionId) () (fun () -> DriverCleared)
+  | DriverCleared -> model, []
+  | DriverRotated -> model, []
 
   | SwitchDriver ->
     let users = model.Users
@@ -187,42 +167,51 @@ let update (deps: Dependencies) msg model =
     let connectedNames = users |> List.map (fun u -> u.Name)
     let avatarMap = users |> List.map (fun u -> u.Name, u.Color) |> Map.ofList
 
+    let timerM, timerCmd =
+      Timer.resetForDriver model.Timer nextDriverName connectedNames avatarMap
+      |> Timer.startDrive deps
+
     let m = {
       model with
           ActiveDriver = nextUser
-          Timer = Timer.resetForDriver model.Timer nextDriverName connectedNames avatarMap
+          Timer = timerM
     }
 
-    // Close the outgoing driver's segment only if a drive was actually running
-    // (a prior Stop/Skip/Finish already logged its end otherwise), then open the
-    // incoming driver's segment.
-    let endOutgoingCmd =
-      match model.ActiveDriver, model.Timer.State with
-      | Some outgoing, (Timer.Running | Timer.Paused) -> logDriveCmd model Session.DriveEventType.Switched outgoing.Name
-      | _ -> Cmd.none
+    // A prior Skip or Finish already ended the outgoing Drive, unless it still runs or is paused.
+    let endsCurrentDrive =
+      match model.Timer.State with
+      | Timer.Running
+      | Timer.Paused -> true
+      | _ -> false
 
-    let startIncomingCmd =
-      match nextDriverName with
-      | Some name -> logDriveCmd model Session.DriveEventType.Started name
-      | None -> Cmd.none
+    let currentDriver = model.ActiveDriver |> Option.map (fun u -> u.Name)
 
-    m,
-    Cmd.batch [
-      activeDriverCmd m nextDriverName
-      endOutgoingCmd
-      startIncomingCmd
-      Cmd.ofMsg (TimerMsg Timer.Start)
-    ]
+    // SwitchDriver runs only on the Client that pressed the key, so the Drive history gets one entry.
+    let rotateCmd =
+      Cmd.OfAsync.perform
+        (fun () ->
+          model.Backend.Driving.RotateDriver
+            model.SessionId
+            model.CurrentUser.Name
+            currentDriver
+            endsCurrentDrive
+            nextDriverName
+            (Timer.toSnapshot timerM))
+        ()
+        (fun () -> DriverRotated)
+
+    m, Cmd.batch [ rotateCmd; Cmd.map TimerMsg timerCmd ]
 
   | TimerMsg tMsg ->
     let m, cmd = Timer.update deps tMsg model.Timer
     { model with Timer = m }, Cmd.map TimerMsg cmd
 
 let subscriptions (model: Model) =
-  (Firebase.Users.subscription model.Persistence.Client model.Persistence.SessionId "journey" (fun ev ->
-    match ev with
-    | Firebase.UserChanged(user, presence) -> RemoteUserChanged(user, presence)
-    | Firebase.UserRemoved user -> RemoteUserRemoved user))
+  (model.Backend.Presence.Subscription model.SessionId "journey"
+   |> Subs.map (fun ev ->
+     match ev with
+     | Backend.UserChanged(user, presence) -> RemoteUserChanged(user, presence)
+     | Backend.UserRemoved user -> RemoteUserRemoved user))
   @ (Timer.subscriptions model.Timer |> Subs.map TimerMsg)
 
 let keyMap (_model: Model) : Spectre.Tui.App.IKeyMap =

@@ -2,7 +2,6 @@ module Notes
 
 open System
 open Elmish
-open Firebase.Database
 open Spectre.Tui
 open SpectreTuff.Keymap
 open Locking
@@ -19,8 +18,11 @@ type Model = {
   FreetextSaveToken: int
   InsertActivityToken: int
   Lock: Locking.Lock option
+  // An acquire of the Edit lock is on its way. Insert mode starts when the backend accepts it.
+  AwaitingEditLock: bool
   User: string
-  Persistence: Firebase.Persistence
+  Backend: Backend.Backend
+  SessionId: string
   // Live editor, present only while in Insert mode. It owns the caret and does
   // all at-cursor editing; FreetextContent is kept in sync from it on each edit
   // and remains the source of truth for persistence and Normal-mode rendering.
@@ -29,6 +31,7 @@ type Model = {
 
 type Msg =
   | EnterInsert
+  | EditLockAnswered of proposed: Locking.Lock * Result<unit, string>
   | ExitInsert
   | Edit of TextEditing.EditAction
   | MaybeSaveFreetext of int
@@ -78,6 +81,7 @@ let handleKey (key: ConsoleKeyInfo) (model: Model) : Msg option =
     match key.Key with
     | ConsoleKey.Escape -> Some ExitInsert
     | _ -> TextEditing.keyToAction true key |> Option.map Edit
+  | Normal when model.AwaitingEditLock -> None
   | Normal ->
     match key.KeyChar with
     | 'i' -> Some EnterInsert
@@ -91,7 +95,7 @@ let handlePaste (text: string) (model: Model) : Msg option =
 let capturesInput (model: Model) =
   match model.InputMode with
   | Insert -> true
-  | Normal -> false
+  | Normal -> model.AwaitingEditLock
 
 let keyMap (model: Model) =
   let bindings =
@@ -101,30 +105,29 @@ let keyMap (model: Model) =
 
   KeyBinding.toKeyMap bindings model
 
-let init (client: FirebaseClient) (sessionId: string) (user: string) = {
+let init (backend: Backend.Backend) (sessionId: string) (user: string) = {
   InputMode = Normal
   FreetextContent = ""
   FreetextSaveToken = 0
   InsertActivityToken = 0
   Lock = None
+  AwaitingEditLock = false
   User = user
-  Persistence = {
-    Client = client
-    SessionId = sessionId
-  }
+  Backend = backend
+  SessionId = sessionId
   Editor = None
 }
 
-let private saveFreetextCmd (model: Model) : Cmd<Msg> =
+let private saveDraftCmd (model: Model) : Cmd<Msg> =
   Cmd.OfAsync.perform
-    (fun () -> Firebase.Notes.saveFreetext model.Persistence.Client model.Persistence.SessionId model.FreetextContent)
+    (fun () -> model.Backend.Notes.SaveDraft model.SessionId model.FreetextContent model.Lock)
     ()
     (fun () -> StateSaved)
 
 // Debounce freetext writes: each typed character bumps a token and schedules a
 // MaybeSaveFreetext for that token after a short idle delay. The actual save
 // only fires if the token still matches the latest one — so a burst of fast
-// keystrokes collapses into a single Firebase write at the end.
+// keystrokes collapses into a single write at the end.
 let private scheduleFreetextSave (token: int) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> async { do! Async.Sleep freetextDebounceMs }) () (fun () -> MaybeSaveFreetext token)
 
@@ -134,52 +137,50 @@ let private scheduleFreetextSave (token: int) : Cmd<Msg> =
 let private scheduleAutoExit (token: int) : Cmd<Msg> =
   Cmd.OfAsync.perform (fun () -> async { do! Async.Sleep autoExitInsertMs }) () (fun () -> MaybeAutoExitInsert token)
 
-let private saveLockCmd (model: Model) : Cmd<Msg> =
-  match model.Lock with
-  | Some lock ->
-    Cmd.OfAsync.perform
-      (fun () -> Firebase.Notes.saveLock model.Persistence.Client model.Persistence.SessionId lock.Owner lock.LockedAt)
-      ()
-      (fun () -> StateSaved)
-  | None -> []
+// The server backend shows its rejection. A Firebase rejection stays silent: the key hint shows the holder.
+let private acquireLockCmd (model: Model) (lock: Locking.Lock) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Notes.AcquireEditLock model.SessionId lock model.Lock) () (fun answer ->
+    EditLockAnswered(lock, answer))
 
-let private releaseLockCmd (model: Model) : Cmd<Msg> =
-  Cmd.OfAsync.perform
-    (fun () -> Firebase.Notes.releaseLock model.Persistence.Client model.Persistence.SessionId)
-    ()
-    (fun () -> StateSaved)
+let private endEditCmd (model: Model) : Cmd<Msg> =
+  Cmd.OfAsync.perform (fun () -> model.Backend.Notes.EndEdit model.SessionId model.FreetextContent) () (fun () ->
+    StateSaved)
 
 let update msg model =
   match msg with
   | EnterInsert ->
-    match isLockedByOther model with
-    | true -> model, []
-    | false ->
-      let activityToken = model.InsertActivityToken + 1
-
+    match model.AwaitingEditLock, model.InputMode with
+    | true, _
+    | _, Insert -> model, []
+    | false, Normal ->
       let lock = {
         Owner = model.User
         LockedAt = Clock.nowMs ()
       }
 
+      { model with AwaitingEditLock = true }, acquireLockCmd model lock
+  | EditLockAnswered(_, Error _) -> { model with AwaitingEditLock = false }, []
+  | EditLockAnswered(lock, Ok()) ->
+    match model.InputMode with
+    | Insert -> { model with AwaitingEditLock = false }, []
+    | Normal ->
+      let activityToken = model.InsertActivityToken + 1
+
       // Build the live editor from the current content and place the caret at
       // the end (matching the previous behaviour). It owns the caret from here.
-      let editor =
-        textBox model.FreetextContent
-        |> withMode TextBoxMode.MultiLine
-        |> focused
+      let editor = textBox model.FreetextContent |> withMode TextBoxMode.MultiLine |> focused
 
       editor.MoveToEnd()
 
-      let updated = {
+      {
         model with
             InputMode = Insert
+            AwaitingEditLock = false
             InsertActivityToken = activityToken
             Lock = Some lock
             Editor = Some editor
-      }
-
-      updated, Cmd.batch [ saveLockCmd updated; scheduleAutoExit activityToken ]
+      },
+      scheduleAutoExit activityToken
   | ExitInsert ->
     // Bump the token so any in-flight debounced save is cancelled, then flush
     // the current content immediately so other users see the final edit.
@@ -211,7 +212,7 @@ let update msg model =
 
     let cmds =
       match wasInsert with
-      | true -> [ saveFreetextCmd updated; releaseLockCmd updated ]
+      | true -> [ endEditCmd updated ]
       | false -> []
 
     updated, Cmd.batch cmds
@@ -236,7 +237,12 @@ let update msg model =
         }
 
         updated, Cmd.batch [ scheduleFreetextSave bumped; scheduleAutoExit activityToken ]
-      | false -> { model with InsertActivityToken = activityToken }, scheduleAutoExit activityToken
+      | false ->
+        {
+          model with
+              InsertActivityToken = activityToken
+        },
+        scheduleAutoExit activityToken
   | RemoteStateLoaded(Some state) ->
     // While the user is actively typing, ignore the freetext echo from the
     // remote — applying it would clobber characters typed since the in-flight
@@ -276,7 +282,7 @@ let update msg model =
         | other -> other
 
       let updated = { model with Lock = refreshedLock }
-      updated, Cmd.batch [ saveFreetextCmd updated; saveLockCmd updated ]
+      updated, saveDraftCmd updated
     | false -> model, []
   | MaybeAutoExitInsert token ->
     match model.InputMode = Insert && token = model.InsertActivityToken with
@@ -285,7 +291,7 @@ let update msg model =
   | StateSaved -> model, []
 
 let subscriptions (model: Model) =
-  Firebase.Notes.subscription model.Persistence.Client model.Persistence.SessionId RemoteStateLoaded
+  model.Backend.Notes.Subscription model.SessionId |> Subs.map RemoteStateLoaded
 
 let widget (model: Model) (isFocused: bool) : IWidget =
   match model.InputMode with
@@ -298,7 +304,4 @@ let widget (model: Model) (isFocused: bool) : IWidget =
       |> withMode TextBoxMode.MultiLine
       |> (focused >> withCursorAtEnd)
       :> IWidget
-  | Normal ->
-    ofString model.FreetextContent
-    |> withOverflow Overflow.Fold
-    :> IWidget
+  | Normal -> ofString model.FreetextContent |> withOverflow Overflow.Fold :> IWidget

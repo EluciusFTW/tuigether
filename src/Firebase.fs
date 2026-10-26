@@ -9,27 +9,6 @@ open Newtonsoft.Json.Linq
 
 type Config = { Url: string; Secret: string }
 
-// A Firebase client paired with the session it's scoped to. Held by every per-session
-// component (Timer, Notes, TodoList, DriveLog, Journey) so they can issue writes/reads.
-type Persistence = {
-  Client: FirebaseClient
-  SessionId: string
-}
-
-// Events emitted by the global sessions-list stream (used by SessionList).
-type SessionEvent =
-  // Connected users per session id ride along with the sessions snapshot, so the
-  // list needs no per-session presence stream.
-  | SessionsLoaded of sessions: (string * Session.Data) list * connectedUsers: Map<string, Set<string>>
-  | SessionChanged of string * Session.Data
-  | SessionRemoved of string
-  | ConnectionError of string
-
-// Events emitted by the per-session connectedUsers stream (used by Avatar).
-type UserEvent =
-  | UserChanged of user: string * presence: Session.UserPresence
-  | UserRemoved of user: string
-
 let private sessionsPath = "sessions"
 
 let createClient (cfg: Config) =
@@ -153,8 +132,7 @@ module Sessions =
 
         let data = sessions |> List.map (fun o -> o.Key, o.Object.ToObject<Session.Data>())
 
-        let connectedUsers =
-          sessions |> List.map (fun o -> o.Key, connectedUsersOf o.Object) |> Map.ofList
+        let connectedUsers = sessions |> List.map (fun o -> o.Key, connectedUsersOf o.Object) |> Map.ofList
 
         return Some(data, connectedUsers)
       with _ ->
@@ -166,16 +144,16 @@ module Sessions =
   // subscribeReload, which also performs an initial load on registration. This is
   // far more reliable than deserializing heterogeneous per-child streaming events
   // into Session.Data, which silently dropped new-session events.
-  let subscription (client: FirebaseClient) (wrap: SessionEvent -> 'appMsg) _ = [
+  let subscription (client: FirebaseClient) (wrap: Backend.SessionEvent -> 'appMsg) = [
     [ "firebase-sessions" ],
     fun dispatch ->
       subscribeReload
         (client.Child(sessionsPath))
         (fun () -> loadAll client)
         (function
-        | Some(sessions, connectedUsers) -> dispatch (wrap (SessionsLoaded(sessions, connectedUsers)))
+        | Some(sessions, connectedUsers) -> dispatch (wrap (Backend.SessionsLoaded(sessions, connectedUsers)))
         | None -> ())
-        (fun e -> dispatch (wrap (ConnectionError e)))
+        (fun e -> dispatch (wrap (Backend.ConnectionError e)))
   ]
 
   let create
@@ -294,7 +272,7 @@ module Users =
   let private subscribeConnectedUsers
     (client: FirebaseClient)
     (sessionId: string)
-    (dispatch: UserEvent -> unit)
+    (dispatch: Backend.UserEvent -> unit)
     (onConnectionError: string -> unit)
     : IDisposable =
     let onNext (ev: FirebaseEvent<Session.UserPresence>) =
@@ -303,11 +281,11 @@ module Users =
         | true -> ()
         | false ->
           match ev.EventType with
-          | FirebaseEventType.Delete -> dispatch (UserRemoved ev.Key)
+          | FirebaseEventType.Delete -> dispatch (Backend.UserRemoved ev.Key)
           | _ ->
             match isNull (box ev.Object) with
             | true -> ()
-            | false -> dispatch (UserChanged(ev.Key, ev.Object))
+            | false -> dispatch (Backend.UserChanged(ev.Key, ev.Object))
       with e ->
         onConnectionError (formatError e)
 
@@ -318,14 +296,17 @@ module Users =
       .AsObservable<Session.UserPresence>()
       .Subscribe(Action<FirebaseEvent<Session.UserPresence>> onNext, Action<exn> onError)
 
-  // `subscriberTag` distinguishes subscribers of the same session's connectedUsers
-  // path. Elmish keys subscriptions by their key list and keeps the first-registered
-  // start function for a given key, so two consumers (e.g. two components)
-  // sharing one key would silently route all events to whichever registered first.
-  let subscription (client: FirebaseClient) (sessionId: string) (subscriberTag: string) (wrap: UserEvent -> 'appMsg) = [
-    [ "connected-users"; subscriberTag; sessionId ],
-    fun dispatch -> subscribeConnectedUsers client sessionId (wrap >> dispatch) (fun _ -> ())
-  ]
+  // `subscriberTag`: see `Backend.IPresence.Subscription`.
+  let subscription
+    (client: FirebaseClient)
+    (sessionId: string)
+    (subscriberTag: string)
+    (wrap: Backend.UserEvent -> 'appMsg)
+    =
+    [
+      [ "connected-users"; subscriberTag; sessionId ],
+      fun dispatch -> subscribeConnectedUsers client sessionId (wrap >> dispatch) (fun _ -> ())
+    ]
 
   let join
     (client: FirebaseClient)
@@ -393,50 +374,6 @@ module Users =
     }
 
     setValue ((connectedUsersPath client sessionId).Child user) presence
-
-// ─── Push IDs ────────────────────────────────────────────────────────────────
-//
-// Port of Firebase's client-side push-ID algorithm: 20-character lexicographically
-// sortable IDs (8 chars timestamp + 12 chars randomness). Concurrent generation
-// across users yields distinct keys, so per-item writes never collide.
-
-module PushId =
-
-  let private chars = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
-
-  let private rng = Random()
-  let private syncLock = obj ()
-  let private lastRandChars: int array = Array.zeroCreate 12
-  let mutable private lastPushTime = 0L
-
-  let generate () =
-    lock syncLock (fun () ->
-      let timestamp = Clock.nowMs ()
-      let duplicateTime = timestamp = lastPushTime
-      lastPushTime <- timestamp
-
-      let timestampChars = Array.zeroCreate<char> 8
-      let mutable remaining = timestamp
-
-      for i in 7..-1..0 do
-        timestampChars.[i] <- chars.[int (remaining % 64L)]
-        remaining <- remaining / 64L
-
-      match duplicateTime with
-      | false ->
-        for i in 0..11 do
-          lastRandChars.[i] <- rng.Next(64)
-      | true ->
-        let mutable carryIndex = 11
-
-        while carryIndex >= 0 && lastRandChars.[carryIndex] = 63 do
-          lastRandChars.[carryIndex] <- 0
-          carryIndex <- carryIndex - 1
-
-        lastRandChars.[carryIndex] <- lastRandChars.[carryIndex] + 1
-
-      let randChars = lastRandChars |> Array.map (fun n -> chars.[n])
-      String(timestampChars) + String(randChars))
 
 // ─── Notes ───────────────────────────────────────────────────────────────────
 
