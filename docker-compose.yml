@@ -1,6 +1,7 @@
-# PostgreSQL and two tuigether server nodes on one database.
+# PostgreSQL, Seq and two tuigether server nodes on one database. The nodes send their traces and logs to Seq.
 # Start:  docker compose up --build
-# Reset:  docker compose down   (the database has no named volume, so the next start is empty)
+# Reset:  docker compose down   (the database and Seq have no named volume, so the next start is empty)
+# Seq UI: http://localhost:5380
 
 name: tuigether
 
@@ -8,12 +9,18 @@ x-node: &node
   build:
     context: .
     dockerfile: server/Tuigether.Server/Dockerfile
-  environment:
+  environment: &node-environment
     ConnectionStrings__Postgres: Host=postgres;Database=tuigether;Username=tuigether;Password=tuigether
     Tuigether__ApiKey: ${TUIGETHER_API_KEY:-dev-api-key}
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://seq/ingest/otlp
+    # Seq accepts gRPC only over HTTPS.
+    OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    OTEL_SERVICE_NAME: tuigether
   depends_on:
     postgres:
       condition: service_healthy
+    seq:
+      condition: service_started
 
 services:
   postgres:
@@ -31,12 +38,27 @@ services:
       timeout: 5s
       retries: 15
 
+  seq:
+    image: datalust/seq:2026.1.17473
+    environment:
+      ACCEPT_EULA: "Y"
+      # Not secure, and not for production. This file runs only on a developer machine.
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"
+    ports:
+      - "5380:80"
+
   node-a:
     <<: *node
+    environment:
+      <<: *node-environment
+      OTEL_RESOURCE_ATTRIBUTES: service.instance.id=node-a
     ports:
       - "5101:8080"
 
   node-b:
     <<: *node
+    environment:
+      <<: *node-environment
+      OTEL_RESOURCE_ATTRIBUTES: service.instance.id=node-b
     ports:
       - "5102:8080"

@@ -35,7 +35,8 @@ Run every command from the repository root.
   file you changed.
 - Server, after a change to the startup, the configuration or the Dockerfile: `docker compose up --build --detach`.
   `curl localhost:5101/health` and `curl localhost:5102/health` then answer `Healthy`. `docker compose down` stops the
-  nodes and deletes the database.
+  nodes and deletes the database. The same command starts Seq, which receives the traces and logs of the nodes over
+  OTLP. The Seq UI is on `http://localhost:5380`.
 - `dotnet run --project src` starts the full-screen app. It connects to the database in
   `~/.config/tuigether/config.json` or the `FIREBASE_*` variables. Every user of that database sees the sessions it
   creates. Its git actions run in the current directory.

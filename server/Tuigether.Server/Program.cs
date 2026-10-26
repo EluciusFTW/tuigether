@@ -27,7 +27,7 @@ builder.Services
     .ValidateOnStart();
 
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddShared();
+builder.Services.AddShared(builder.Configuration);
 builder.Services.AddHealthChecks();
 
 builder.Services
@@ -40,6 +40,9 @@ builder.Services
 
         // Bobcat finds the events that a request caused by its correlation id.
         options.Events.MetadataConfig.CorrelationIdEnabled = true;
+
+        // Wolverine sets it to the id of the message that appended the event.
+        options.Events.MetadataConfig.CausationIdEnabled = true;
     })
     .IntegrateWithWolverine()
     .UseLightweightSessions();

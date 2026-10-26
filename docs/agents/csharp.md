@@ -132,11 +132,14 @@ Module rules:
 - A module sits in the folder closest to what it registers. A parent folder gets a `Module.cs` that calls the modules of
   its subfolders. It also registers what belongs to the parent folder itself, as `Presence/Module.cs` does with the
   durable queue of `CheckParticipantLeft`. `Program.cs` calls the top-level modules: `AddDomain()`, `AddSessions()`,
-  `AddPresence()`, `AddDriving()`, `AddNotes()`, `AddGoal()`, `AddTodos()`, `AddNoteList()` and `AddShared()`.
+  `AddPresence()`, `AddDriving()`, `AddNotes()`, `AddGoal()`, `AddTodos()`, `AddNoteList()` and
+  `AddShared(configuration)`.
 - The file is always `Module.cs`, and the class is always `public static class Module`. It holds one extension member
   on `IServiceCollection` in an `extension` block, named after the folder path: `AddDrivingTimerView()`. Each folder
   has its own namespace, so the `Module` classes do not collide. A caller uses the extension member, not the class
   name.
+- A module that decides from configuration at registration time takes `IConfiguration` as its parameter, and its
+  parent module passes it on, as `AddSharedTelemetry(configuration)` in `Shared/Telemetry/` does.
 - A module adds Marten configuration with `services.ConfigureMarten(...)`, and Wolverine configuration with
   `services.ConfigureWolverine(...)`. See **SignalR in a module** for the exception.
 - Each `...View/Module.cs` registers its projection with `ProjectionLifecycle.Inline` and routes its read model type to
@@ -146,7 +149,7 @@ Module rules:
   calls each step itself, in this order: request check, health checks, hub, endpoints. The request check must run
   before the hub and the endpoints.
 - `Program.cs` keeps the host-wide settings: the options validation of `ServerOptions`, `TimeProvider`, the health
-  checks, the Marten connection, the schema name, the correlation id, `IntegrateWithWolverine`,
+  checks, the Marten connection, the schema name, the correlation and causation ids, `IntegrateWithWolverine`,
   `UseLightweightSessions`, `AddWolverineHttp`, and in `UseWolverine` the service name, the assembly discovery,
   `AutoApplyTransactions`, the relay of the user name, the durability mode, the polling interval, the
   `ConcurrencyException` retry, `UseSignalR` and the recurring schedules.
