@@ -53,6 +53,16 @@ down:
 # Delete the database and start again with an empty Session list.
 reset: down up
 
+# Delete all data in the database and start both nodes on an empty database. Seq keeps its logs.
+wipe: && up
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docker compose stop node-a node-b
+    docker compose up --detach --wait postgres
+    docker compose exec -T postgres psql --username=tuigether --dbname=postgres \
+      --command="drop database if exists tuigether with (force)" \
+      --command="create database tuigether"
+
 # Show the health of both nodes.
 health:
     @echo "node a: $(curl -fs localhost:5101/health || echo unreachable)"
