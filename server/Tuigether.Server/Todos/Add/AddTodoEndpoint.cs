@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,35 @@ namespace Tuigether.Server.Todos.Add;
 public static class AddTodoEndpoint
 {
     [WolverinePost(CommandRoutes.AddTodo)]
-    public static Task<IResult> Post(
-        AddTodo command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new AddTodoBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record AddTodoBy(AddTodo Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(AddTodo command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class AddTodoHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        AddTodoBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        AddTodo command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => AddTodoRules.Add(current, request.Command, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (session.Todos.Any(todo => todo.Id == command.TodoId))
+        {
+            return SessionCommand.Reject("A todo with this id exists.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        var now = clock.GetUtcNow();
+        return SessionCommand.Accept(session, [new TodoAdded(session.Id, command.TodoId, command.Text, user, now)]);
+    }
 }

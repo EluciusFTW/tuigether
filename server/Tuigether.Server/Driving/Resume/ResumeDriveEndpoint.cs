@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,29 +14,41 @@ namespace Tuigether.Server.Driving.Resume;
 public static class ResumeDriveEndpoint
 {
     [WolverinePost(CommandRoutes.ResumeDrive)]
-    public static Task<IResult> Post(
-        ResumeDrive command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new ResumeDriveBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record ResumeDriveBy(ResumeDrive Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(ResumeDrive command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class ResumeDriveHandler
 {
     public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
-        ResumeDriveBy request,
+        ResumeDrive command,
         [WriteAggregate(Required = false)] Session? session,
+        Envelope envelope,
         TimeProvider clock)
     {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (session.Timer == TimerPhase.Break)
+        {
+            return SessionCommand.Reject(DrivingRules.BreakRunsReason);
+        }
+
+        if (session.Timer != TimerPhase.DrivePaused)
+        {
+            return SessionCommand.Reject("No Drive is paused.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
         var now = clock.GetUtcNow();
-        var (outcome, events, broadcast) = SessionCommand.Decide(session, current => ResumeDriveRules.Resume(current, request.User, now));
-        return (outcome, events, broadcast, DrivingRules.ScheduleEnds(events, now));
+        Events events = [new DriveResumed(session.Id, now + session.DriveRemaining, user, now)];
+        return SessionCommand.Accept(session, events, DrivingRules.ScheduleEnds(events, now));
     }
 }

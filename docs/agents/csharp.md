@@ -51,12 +51,9 @@ Known conflicts:
   `Envelope.UserName`, through `SessionCommand.UserOf`. It returns the reply with `SessionCommand.NotFound`, `Reject`
   or `Accept`, as `Driving/Rotate/` does. `Accept` adds the broadcast. `SessionCommand.InvokeAsync` turns the
   `CommandOutcome` into the HTTP answer. For a Command, this entry replaces "Reject in a `Validate`, `Before` or
-  `Load` method" from **Failure in a handler**.
-- **Command with a `*Rules.cs` file.** The other Commands still use the earlier shape: the endpoint wraps the Command
-  and the user name into a `*By` message, the handler calls a pure rule that returns a `Result`, and
-  `SessionCommand.Decide` builds the reply. A Command that starts a stream has no concurrency conflict.
-  `CreateSessionHandler` in `Sessions/Create/` uses the mediator convention all the same, so that every Command goes
-  through `SessionCommand.InvokeAsync`.
+  `Load` method" from **Failure in a handler**. A Command that starts a stream has no aggregate and no concurrency
+  conflict. `CreateSessionHandler` in `Sessions/Create/` goes through `SessionCommand.InvokeAsync` all the same, so
+  that every Command has one way in.
 - **User name of a request.** `RequestCheckMiddleware` makes the user name header the user of the request.
   `EnableRelayOfUserName` in `Program.cs` makes Wolverine copy it to the envelope of each message that an endpoint
   sends.
@@ -111,7 +108,11 @@ Folder rules:
   live in `Tuigether.Contracts`, so a projection depends on no other feature folder. A read model slice has the suffix
   `View`: `Driving/TimerView/`.
 - `Domain/` at the project root holds the aggregate `Session` and the rules that two or more features call, such as
-  `SessionRules.CheckNotDeleted`. A rule that one use case calls stays in its slice.
+  `SessionRules.TimeLeft`.
+- A handler holds the decision of its use case. A decision moves into a `*Rules.cs` file when two slices call it, as
+  `DrivingRules.StartBreak` does for `SkipDrive` and `FinishDrive`. A one-line check stays inline in each handler.
+  `CheckParticipantLeftRules` is a file of its own, because the sweep of crashed nodes needs the same leave decision
+  as the leave check.
 - `Shared/<slug>/` holds boilerplate. Each slug names one purpose: `Shared/Hubs/`, `Shared/Requests/`. A file that
   belongs to no group lies loose in `Shared/`: `Result.cs`, `ServerOptions.cs`.
 - The namespace of each file matches its folder.

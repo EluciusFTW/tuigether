@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,35 @@ namespace Tuigether.Server.NoteList.Remove;
 public static class RemoveNoteEndpoint
 {
     [WolverinePost(CommandRoutes.RemoveNote)]
-    public static Task<IResult> Post(
-        RemoveNote command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new RemoveNoteBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record RemoveNoteBy(RemoveNote Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(RemoveNote command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class RemoveNoteHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        RemoveNoteBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        RemoveNote command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => RemoveNoteRules.Remove(current, request.Command, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (!session.NoteIds.Contains(command.NoteId))
+        {
+            return SessionCommand.Reject("The note does not exist.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        var now = clock.GetUtcNow();
+        return SessionCommand.Accept(session, [new NoteRemoved(session.Id, command.NoteId, user, now)]);
+    }
 }

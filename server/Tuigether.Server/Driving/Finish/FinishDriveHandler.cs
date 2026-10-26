@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared;
 using Tuigether.Server.Shared.Push;
@@ -16,10 +17,23 @@ public static class FinishDriveHandler
         IOptions<ServerOptions> options,
         TimeProvider clock)
     {
-        var events = session is null ? [] : FinishDriveRules.Finish(session, finish.EndsAt, options.Value.BreakDuration);
-        return (
-            [.. events],
-            events.IsEmpty ? null : new BroadcastSessionChanged(finish.SessionId),
-            DrivingRules.ScheduleEnds(events, clock.GetUtcNow()));
+        if (session is null || session.IsDeleted)
+        {
+            return ([], null, []);
+        }
+
+        if (session.Timer != TimerPhase.DriveRunning || session.DriveEndsAt != finish.EndsAt)
+        {
+            return ([], null, []);
+        }
+
+        // The Break starts at the end of the Drive, so all Clients count it from the same time.
+        Events events =
+        [
+            new DriveFinished(session.Id, finish.EndsAt),
+            DrivingRules.StartBreak(session, user: null, finish.EndsAt, options.Value.BreakDuration),
+        ];
+
+        return (events, new BroadcastSessionChanged(finish.SessionId), DrivingRules.ScheduleEnds(events, clock.GetUtcNow()));
     }
 }

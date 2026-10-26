@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,37 @@ namespace Tuigether.Server.Notes.EditingEnd;
 public static class EndNotesEditingEndpoint
 {
     [WolverinePost(CommandRoutes.EndNotesEditing)]
-    public static Task<IResult> Post(
-        EndNotesEditing command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new EndNotesEditingBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record EndNotesEditingBy(EndNotesEditing Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(EndNotesEditing command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class EndNotesEditingHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        EndNotesEditingBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        EndNotesEditing command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => EndNotesEditingRules.End(current, request.Command.Text, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        if (session.NotesEditLockHolder != user)
+        {
+            return SessionCommand.Reject($"{user} does not hold the Edit lock of the Notes.");
+        }
+
+        var now = clock.GetUtcNow();
+        return session.NotesText == command.Text
+            ? SessionCommand.Accept(session, [new NotesEditingEnded(session.Id, user, now)])
+            : SessionCommand.Accept(session, [new NotesEdited(session.Id, command.Text, user, now), new NotesEditingEnded(session.Id, user, now)]);
+    }
 }

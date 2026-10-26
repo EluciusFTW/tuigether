@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Diagnostics;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
@@ -62,16 +61,4 @@ public static class SessionCommand
         Events events,
         OutgoingMessages? messages = null) =>
         (new CommandOutcome.Accepted(), events, new BroadcastSessionChanged(session.Id), messages ?? []);
-
-    /// <summary>
-    /// Appends the events of an accepted Command on an existing Session and signals the change to every node.
-    /// </summary>
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Decide(
-        Session? session,
-        Func<Session, Result<ImmutableArray<object>, string>> rule) =>
-        session is null
-            ? (new CommandOutcome.SessionNotFound(), [], null)
-            : rule(session).Match<(CommandOutcome, Events, BroadcastSessionChanged?)>(
-                events => (new CommandOutcome.Accepted(), [.. events], new BroadcastSessionChanged(session.Id)),
-                static reason => (new CommandOutcome.Rejected(reason), [], null));
 }

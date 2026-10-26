@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,35 @@ namespace Tuigether.Server.NoteList.Change;
 public static class ChangeNoteEndpoint
 {
     [WolverinePost(CommandRoutes.ChangeNote)]
-    public static Task<IResult> Post(
-        ChangeNote command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new ChangeNoteBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record ChangeNoteBy(ChangeNote Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(ChangeNote command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class ChangeNoteHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        ChangeNoteBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        ChangeNote command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => ChangeNoteRules.Change(current, request.Command, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (!session.NoteIds.Contains(command.NoteId))
+        {
+            return SessionCommand.Reject("The note does not exist.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        var now = clock.GetUtcNow();
+        return SessionCommand.Accept(session, [new NoteChanged(session.Id, command.NoteId, command.Text, user, now)]);
+    }
 }

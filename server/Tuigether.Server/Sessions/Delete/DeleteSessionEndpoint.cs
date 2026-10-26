@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Mvc;
+using JasperFx.Events;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +15,32 @@ namespace Tuigether.Server.Sessions.Delete;
 public static class DeleteSessionEndpoint
 {
     [WolverinePost(CommandRoutes.DeleteSession)]
-    public static Task<IResult> Post(
-        DeleteSession command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new DeleteSessionBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record DeleteSessionBy(DeleteSession Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(DeleteSession command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class DeleteSessionHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        DeleteSessionBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        DeleteSession command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => DeleteSessionRules.Delete(current, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        var now = clock.GetUtcNow();
+
+        // The Archived event makes Marten archive the stream in the same transaction. The events stay for statistics.
+        return SessionCommand.Accept(session, [new SessionDeleted(session.Id, user, now), new Archived("Session deleted")]);
+    }
 }

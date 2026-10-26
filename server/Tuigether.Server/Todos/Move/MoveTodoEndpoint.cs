@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,40 @@ namespace Tuigether.Server.Todos.Move;
 public static class MoveTodoEndpoint
 {
     [WolverinePost(CommandRoutes.MoveTodo)]
-    public static Task<IResult> Post(
-        MoveTodo command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new MoveTodoBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record MoveTodoBy(MoveTodo Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(MoveTodo command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class MoveTodoHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        MoveTodoBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        MoveTodo command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => MoveTodoRules.Move(current, request.Command, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (session.Todos.FirstOrDefault(todo => todo.Id == command.TodoId) is not { } todo)
+        {
+            return SessionCommand.Reject("The todo does not exist.");
+        }
+
+        if (command.NewPosition < 0 || command.NewPosition >= session.Todos.Length)
+        {
+            return SessionCommand.Reject($"The position {command.NewPosition} is not in the range 0 to {session.Todos.Length - 1}.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        var now = clock.GetUtcNow();
+        return SessionCommand.Accept(session, [new TodoMoved(session.Id, todo.Id, command.NewPosition, user, now)]);
+    }
 }

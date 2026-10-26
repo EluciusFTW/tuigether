@@ -1,3 +1,4 @@
+using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Push;
 using Wolverine.Marten;
@@ -11,7 +12,16 @@ public static class EndBreakHandler
         EndBreak end,
         [WriteAggregate(Required = false)] Session? session)
     {
-        var events = session is null ? [] : EndBreakRules.End(session, end.EndsAt);
-        return ([.. events], events.IsEmpty ? null : new BroadcastSessionChanged(end.SessionId));
+        if (session is null || session.IsDeleted)
+        {
+            return ([], null);
+        }
+
+        if (session.Timer != TimerPhase.Break || session.BreakEndsAt != end.EndsAt)
+        {
+            return ([], null);
+        }
+
+        return ([new BreakEnded(session.Id, end.EndsAt)], new BroadcastSessionChanged(end.SessionId));
     }
 }

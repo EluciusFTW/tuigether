@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,37 @@ namespace Tuigether.Server.Goal.EditingEnd;
 public static class EndGoalEditingEndpoint
 {
     [WolverinePost(CommandRoutes.EndGoalEditing)]
-    public static Task<IResult> Post(
-        EndGoalEditing command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new EndGoalEditingBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record EndGoalEditingBy(EndGoalEditing Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(EndGoalEditing command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class EndGoalEditingHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        EndGoalEditingBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        EndGoalEditing command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => EndGoalEditingRules.End(current, request.Command.Text, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        if (session.GoalEditLockHolder != user)
+        {
+            return SessionCommand.Reject($"{user} does not hold the Edit lock of the Goal.");
+        }
+
+        var now = clock.GetUtcNow();
+        return session.GoalText == command.Text
+            ? SessionCommand.Accept(session, [new GoalEditingEnded(session.Id, user, now)])
+            : SessionCommand.Accept(session, [new GoalChanged(session.Id, command.Text, user, now), new GoalEditingEnded(session.Id, user, now)]);
+    }
 }

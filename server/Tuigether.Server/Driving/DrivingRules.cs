@@ -1,6 +1,5 @@
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
-using Tuigether.Server.Shared;
 using Wolverine;
 
 namespace Tuigether.Server.Driving;
@@ -11,12 +10,6 @@ public static class DrivingRules
     /// During a Break no Drive exists to pause, resume or skip. Only a rotation starts the next Drive.
     /// </summary>
     public const string BreakRunsReason = "A Break runs.";
-
-    /// <inheritdoc cref="BreakRunsReason"/>
-    public static Result<Session, string> CheckNoBreak(Session session) =>
-        session.Timer == TimerPhase.Break
-            ? Result.Error(BreakRunsReason)
-            : Result.Ok(session);
 
     /// <summary>
     /// The Break after a finished or skipped Drive, from <paramref name="at"/> on.

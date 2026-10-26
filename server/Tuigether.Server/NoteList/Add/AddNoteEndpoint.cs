@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,35 @@ namespace Tuigether.Server.NoteList.Add;
 public static class AddNoteEndpoint
 {
     [WolverinePost(CommandRoutes.AddNote)]
-    public static Task<IResult> Post(
-        AddNote command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new AddNoteBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record AddNoteBy(AddNote Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(AddNote command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class AddNoteHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        AddNoteBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        AddNote command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => AddNoteRules.Add(current, request.Command, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (session.NoteIds.Contains(command.NoteId))
+        {
+            return SessionCommand.Reject("A note with this id exists.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        var now = clock.GetUtcNow();
+        return SessionCommand.Accept(session, [new NoteAdded(session.Id, command.NoteId, command.Text, user, now)]);
+    }
 }

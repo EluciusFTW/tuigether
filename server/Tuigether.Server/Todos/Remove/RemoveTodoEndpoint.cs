@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,35 @@ namespace Tuigether.Server.Todos.Remove;
 public static class RemoveTodoEndpoint
 {
     [WolverinePost(CommandRoutes.RemoveTodo)]
-    public static Task<IResult> Post(
-        RemoveTodo command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new RemoveTodoBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record RemoveTodoBy(RemoveTodo Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(RemoveTodo command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class RemoveTodoHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        RemoveTodoBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        RemoveTodo command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => RemoveTodoRules.Remove(current, request.Command, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (session.Todos.FirstOrDefault(todo => todo.Id == command.TodoId) is not { } todo)
+        {
+            return SessionCommand.Reject("The todo does not exist.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        var now = clock.GetUtcNow();
+        return SessionCommand.Accept(session, [new TodoRemoved(session.Id, todo.Id, user, now)]);
+    }
 }

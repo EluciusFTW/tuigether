@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
@@ -17,31 +16,42 @@ namespace Tuigether.Server.Driving.Skip;
 public static class SkipDriveEndpoint
 {
     [WolverinePost(CommandRoutes.SkipDrive)]
-    public static Task<IResult> Post(
-        SkipDrive command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new SkipDriveBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record SkipDriveBy(SkipDrive Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(SkipDrive command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class SkipDriveHandler
 {
     public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
-        SkipDriveBy request,
+        SkipDrive command,
         [WriteAggregate(Required = false)] Session? session,
+        Envelope envelope,
         IOptions<ServerOptions> options,
         TimeProvider clock)
     {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (session.Timer == TimerPhase.Break)
+        {
+            return SessionCommand.Reject(DrivingRules.BreakRunsReason);
+        }
+
+        if (session.Timer != TimerPhase.DriveRunning)
+        {
+            return SessionCommand.Reject("No Drive runs.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
         var now = clock.GetUtcNow();
-        var (outcome, events, broadcast) =
-            SessionCommand.Decide(session, current => SkipDriveRules.Skip(current, request.User, now, options.Value.BreakDuration));
-        return (outcome, events, broadcast, DrivingRules.ScheduleEnds(events, now));
+        Events events = [new DriveSkipped(session.Id, user, now), DrivingRules.StartBreak(session, user, now, options.Value.BreakDuration)];
+        return SessionCommand.Accept(session, events, DrivingRules.ScheduleEnds(events, now));
     }
 }

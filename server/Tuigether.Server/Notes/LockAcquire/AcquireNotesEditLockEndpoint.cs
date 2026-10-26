@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,47 @@ namespace Tuigether.Server.Notes.LockAcquire;
 public static class AcquireNotesEditLockEndpoint
 {
     [WolverinePost(CommandRoutes.AcquireNotesEditLock)]
-    public static Task<IResult> Post(
-        AcquireNotesEditLock command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new AcquireNotesEditLockBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record AcquireNotesEditLockBy(AcquireNotesEditLock Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(AcquireNotesEditLock command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class AcquireNotesEditLockHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        AcquireNotesEditLockBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        AcquireNotesEditLock command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => AcquireNotesEditLockRules.Acquire(current, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+
+        // A holder who is no Participant never leaves, so no leave check would release the Edit lock.
+        if (!session.Participants.Contains(user))
+        {
+            return SessionCommand.Reject($"{user} is not a Participant of the Session.");
+        }
+
+        // The holder of the Edit lock keeps it, so an acquire by the holder appends nothing.
+        if (session.NotesEditLockHolder == user)
+        {
+            return SessionCommand.Accept(session, []);
+        }
+
+        if (session.NotesEditLockHolder is { } holder)
+        {
+            return SessionCommand.Reject($"{holder} edits the Notes.");
+        }
+
+        return SessionCommand.Accept(session, [new NotesEditingStarted(session.Id, user, clock.GetUtcNow())]);
+    }
 }

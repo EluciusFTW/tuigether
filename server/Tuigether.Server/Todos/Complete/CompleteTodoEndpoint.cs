@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,40 @@ namespace Tuigether.Server.Todos.Complete;
 public static class CompleteTodoEndpoint
 {
     [WolverinePost(CommandRoutes.CompleteTodo)]
-    public static Task<IResult> Post(
-        CompleteTodo command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new CompleteTodoBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record CompleteTodoBy(CompleteTodo Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(CompleteTodo command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class CompleteTodoHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        CompleteTodoBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        CompleteTodo command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => CompleteTodoRules.Complete(current, request.Command, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (session.Todos.FirstOrDefault(todo => todo.Id == command.TodoId) is not { } todo)
+        {
+            return SessionCommand.Reject("The todo does not exist.");
+        }
+
+        if (todo.Completed)
+        {
+            return SessionCommand.Reject("The todo is completed already.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        var now = clock.GetUtcNow();
+        return SessionCommand.Accept(session, [new TodoCompleted(session.Id, todo.Id, user, now)]);
+    }
 }

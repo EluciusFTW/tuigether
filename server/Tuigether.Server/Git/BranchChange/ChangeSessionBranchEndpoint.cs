@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,30 @@ namespace Tuigether.Server.Git.BranchChange;
 public static class ChangeSessionBranchEndpoint
 {
     [WolverinePost(CommandRoutes.ChangeSessionBranch)]
-    public static Task<IResult> Post(
-        ChangeSessionBranch command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new ChangeSessionBranchBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record ChangeSessionBranchBy(ChangeSessionBranch Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(ChangeSessionBranch command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class ChangeSessionBranchHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        ChangeSessionBranchBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        ChangeSessionBranch command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => ChangeSessionBranchRules.Change(current, request.Command, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        var now = clock.GetUtcNow();
+        return SessionCommand.Accept(session, [new SessionBranchChanged(session.Id, command.Branch, user, now)]);
+    }
 }

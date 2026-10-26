@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Mvc;
 using Tuigether.Contracts;
 using Tuigether.Server.Domain;
 using Tuigether.Server.Shared.Commands;
@@ -15,25 +14,40 @@ namespace Tuigether.Server.Todos.Reopen;
 public static class ReopenTodoEndpoint
 {
     [WolverinePost(CommandRoutes.ReopenTodo)]
-    public static Task<IResult> Post(
-        ReopenTodo command,
-        [FromHeader(Name = RequestHeaders.UserName)] string userName,
-        IMessageBus bus,
-        CancellationToken cancellation) =>
-        SessionCommand.InvokeAsync(bus, new ReopenTodoBy(command, userName), cancellation);
-}
-
-/// <inheritdoc cref="Sessions.Create.CreateSessionBy"/>
-public sealed record ReopenTodoBy(ReopenTodo Command, string User)
-{
-    public Guid SessionId => Command.SessionId;
+    public static Task<IResult> Post(ReopenTodo command, IMessageBus bus, CancellationToken cancellation) =>
+        SessionCommand.InvokeAsync(bus, command, cancellation);
 }
 
 public static class ReopenTodoHandler
 {
-    public static (CommandOutcome, Events, BroadcastSessionChanged?) Handle(
-        ReopenTodoBy request,
+    public static (CommandOutcome, Events, BroadcastSessionChanged?, OutgoingMessages) Handle(
+        ReopenTodo command,
         [WriteAggregate(Required = false)] Session? session,
-        TimeProvider clock) =>
-        SessionCommand.Decide(session, current => ReopenTodoRules.Reopen(current, request.Command, request.User, clock.GetUtcNow()));
+        Envelope envelope,
+        TimeProvider clock)
+    {
+        if (session is null)
+        {
+            return SessionCommand.NotFound();
+        }
+
+        if (session.IsDeleted)
+        {
+            return SessionCommand.Reject(SessionRules.DeletedReason);
+        }
+
+        if (session.Todos.FirstOrDefault(todo => todo.Id == command.TodoId) is not { } todo)
+        {
+            return SessionCommand.Reject("The todo does not exist.");
+        }
+
+        if (!todo.Completed)
+        {
+            return SessionCommand.Reject("The todo is open already.");
+        }
+
+        var user = SessionCommand.UserOf(envelope);
+        var now = clock.GetUtcNow();
+        return SessionCommand.Accept(session, [new TodoReopened(session.Id, todo.Id, user, now)]);
+    }
 }
