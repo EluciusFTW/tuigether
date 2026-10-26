@@ -2,6 +2,7 @@ using JasperFx.OpenTelemetry;
 using Marten;
 using OpenTelemetry;
 using OpenTelemetry.Trace;
+using Wolverine;
 
 namespace Tuigether.Server.Shared.Telemetry;
 
@@ -13,10 +14,21 @@ public static class Module
     extension(IServiceCollection services)
     {
         /// <summary>
-        /// Exports traces and logs over OTLP. A node without an OTLP endpoint registers nothing and sends nothing.
+        /// Logs each Command and each appended event, and exports traces and logs over OTLP. A node without an OTLP
+        /// endpoint registers no exporter and sends nothing.
         /// </summary>
         public IServiceCollection AddSharedTelemetry(IConfiguration configuration)
         {
+            services.ConfigureWolverine(static options =>
+            {
+                // Without it, a handler that SessionCommand invokes writes no start, success or failure log.
+                options.InvokeTracing = InvokeTracingMode.Full;
+
+                // Wolverine 6 logs a success at Debug, unlike its docs.
+                options.Policies.MessageSuccessLogLevel(LogLevel.Information);
+            });
+            services.AddSingleton<IConfigureMarten, EventLog>();
+
             if (string.IsNullOrWhiteSpace(configuration[OtlpEndpoint]))
             {
                 return services;

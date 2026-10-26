@@ -16,6 +16,9 @@ x-node: &node
     # Seq accepts gRPC only over HTTPS.
     OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
     OTEL_SERVICE_NAME: tuigether
+    # The event values and the SQL statements hold personal data, so the nodes log them only here.
+    Logging__LogLevel__Marten: Debug
+    Logging__LogLevel__Tuigether.Server.Shared.Telemetry.EventLog: Debug
   depends_on:
     postgres:
       condition: service_healthy
