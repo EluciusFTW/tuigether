@@ -11,6 +11,8 @@ public enum SessionStatus
     Finished,
 }
 
+/// <param name="LastWipPushAt">A Client that opens the Session pulls only after a WIP push that is newer than
+/// this one.</param>
 public sealed record SessionSummary(
     Guid Id,
     string Title,
@@ -18,7 +20,9 @@ public sealed record SessionSummary(
     string CreatedBy,
     string Repository,
     string Branch,
-    DateTimeOffset CreatedAt)
+    DateTimeOffset CreatedAt,
+    string? LastWipPushBy = null,
+    DateTimeOffset? LastWipPushAt = null)
 {
     /// <summary>
     /// The user names of the Participants, in the order of their join.
@@ -28,8 +32,8 @@ public sealed record SessionSummary(
     // Record equality compares an ImmutableArray by reference.
     public bool Equals(SessionSummary? other) =>
         other is not null
-        && (Id, Title, Status, CreatedBy, Repository, Branch, CreatedAt)
-            == (other.Id, other.Title, other.Status, other.CreatedBy, other.Repository, other.Branch, other.CreatedAt)
+        && (Id, Title, Status, CreatedBy, Repository, Branch, CreatedAt, LastWipPushBy, LastWipPushAt)
+            == (other.Id, other.Title, other.Status, other.CreatedBy, other.Repository, other.Branch, other.CreatedAt, other.LastWipPushBy, other.LastWipPushAt)
         && Participants.SequenceEqual(other.Participants);
 
     public override int GetHashCode() =>
@@ -39,6 +43,7 @@ public sealed record SessionSummary(
 /// <summary>
 /// The data of one opened Session.
 /// </summary>
+/// <param name="LastWipPushBy">The Participant of the last WIP push, or null before the first one.</param>
 public sealed record SessionData(
     Guid Id,
     string Title,
@@ -47,7 +52,9 @@ public sealed record SessionData(
     string Repository,
     string Branch,
     DateTimeOffset CreatedAt,
-    string? Driver);
+    string? Driver,
+    string? LastWipPushBy = null,
+    DateTimeOffset? LastWipPushAt = null);
 
 public sealed record Participant(string User, string Avatar);
 

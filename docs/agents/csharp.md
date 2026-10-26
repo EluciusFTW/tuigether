@@ -95,7 +95,7 @@ The server project `server/Tuigether.Server` uses Vertical Slice Architecture. O
 
 Folder rules:
 
-- A feature folder (`Sessions/`, `Presence/`, `Driving/`, `Notes/`, `Goal/`, `Todos/`, `NoteList/`) holds one subfolder per use case. A use case folder holds the
+- A feature folder (`Sessions/`, `Presence/`, `Driving/`, `Notes/`, `Goal/`, `Todos/`, `NoteList/`, `Git/`) holds one subfolder per use case. A use case folder holds the
   endpoint, the message, the handler and the pure rule of that use case: `Driving/Rotate/`. Nest deeper when a use case
   has parts of its own.
 - Code that two or more slices use moves up to their lowest common folder. Use no partial classes to spread one type

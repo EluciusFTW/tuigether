@@ -14,5 +14,10 @@ public sealed partial class SessionDataProjection : SingleStreamProjection<Sessi
 
     public static SessionData Apply(DriverChanged changed, SessionData data) => data with { Driver = changed.Driver };
 
+    public static SessionData Apply(SessionBranchChanged changed, SessionData data) => data with { Branch = changed.Branch };
+
+    public static SessionData Apply(WipPushed pushed, SessionData data) =>
+        data with { LastWipPushBy = pushed.User, LastWipPushAt = pushed.At };
+
     public static bool ShouldDelete(SessionDeleted _) => true;
 }

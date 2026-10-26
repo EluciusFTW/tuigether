@@ -152,4 +152,8 @@ no-op.
 - The NoteList group sends `AddNote`, `ChangeNote` and `RemoveNote` with the item id that the Client proposes. The
   snapshot `SessionNoteList` holds the items in the order of the server. `NoteList.ModelChange` is `FromSnapshots`, as
   for the Todo group.
+- `Git.ChangeBranch` sends `ChangeSessionBranch`, and `Git.RecordWipPush` sends `RecordWipPush`. The server accepts
+  both on every Session that is not deleted. The time of a WIP push comes from the server clock. `SessionData` carries
+  the Session branch and the last WIP push. `SessionSummary` carries them too. When the Session opens, `SessionInfo`
+  takes the last WIP push from the Session list. Without it, the first `SessionData` starts a pull of an old WIP push.
 - An area that the server does not serve yet is a stub: its subscription sends nothing, and its intentions do nothing.

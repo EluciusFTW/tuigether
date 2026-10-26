@@ -106,3 +106,7 @@ public sealed record NoteAdded(Guid SessionId, string NoteId, string Text, strin
 public sealed record NoteChanged(Guid SessionId, string NoteId, string Text, string User, DateTimeOffset At);
 
 public sealed record NoteRemoved(Guid SessionId, string NoteId, string User, DateTimeOffset At);
+
+public sealed record SessionBranchChanged(Guid SessionId, string Branch, string User, DateTimeOffset At);
+
+public sealed record WipPushed(Guid SessionId, string User, DateTimeOffset At);

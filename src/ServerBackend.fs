@@ -363,9 +363,20 @@ let private toData
     LastWipPushBy = null
   }
 
+let private withWipPush (lastWipPushBy: string) (lastWipPushAt: Nullable<DateTimeOffset>) (data: Session.Data) = {
+  data with
+      LastWipPushBy = lastWipPushBy
+      LastWipPushAt =
+        lastWipPushAt
+        |> Option.ofNullable
+        |> Option.map _.ToUnixTimeMilliseconds()
+        |> Option.defaultValue 0L
+}
+
 // The Session list shows no Driver.
 let private summaryData (summary: SessionSummary) =
   toData summary.Title summary.Status summary.CreatedBy summary.Repository summary.Branch summary.CreatedAt null
+  |> withWipPush summary.LastWipPushBy summary.LastWipPushAt
 
 // The server lock has no time limit, so the lock never expires in `Locking`.
 let private lockedAt (holder: string) =
@@ -374,7 +385,9 @@ let private lockedAt (holder: string) =
   | false -> Int64.MaxValue
 
 let private sessionData (data: SessionData) (goal: SessionGoal option) =
-  let shown = toData data.Title data.Status data.CreatedBy data.Repository data.Branch data.CreatedAt data.Driver
+  let shown =
+    toData data.Title data.Status data.CreatedBy data.Repository data.Branch data.CreatedAt data.Driver
+    |> withWipPush data.LastWipPushBy data.LastWipPushAt
 
   match goal with
   | Some goal -> {
@@ -796,10 +809,11 @@ let create (config: Config) (notify: string -> unit) : Backend.Backend =
       }
     Git =
       { new Backend.IGit with
-          member _.ChangeBranch _sessionId _branch =
-            nothing
+          member _.ChangeBranch sessionId branch =
+            postOnSession sessionId (fun id -> ChangeSessionBranch(id, branch)) CommandRoutes.ChangeSessionBranch
 
-          member _.RecordWipPush _sessionId _user _pushedAt =
-            nothing
+          // The server takes the user from the request headers and the time from its own clock.
+          member _.RecordWipPush sessionId _user _pushedAt =
+            postOnSession sessionId RecordWipPush CommandRoutes.RecordWipPush
       }
   }

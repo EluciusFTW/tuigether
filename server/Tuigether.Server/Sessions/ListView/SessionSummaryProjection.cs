@@ -18,5 +18,10 @@ public sealed partial class SessionSummaryProjection : SingleStreamProjection<Se
     public static SessionSummary Apply(ParticipantLeft left, SessionSummary summary) =>
         summary with { Participants = summary.Participants.Remove(left.User) };
 
+    public static SessionSummary Apply(SessionBranchChanged changed, SessionSummary summary) => summary with { Branch = changed.Branch };
+
+    public static SessionSummary Apply(WipPushed pushed, SessionSummary summary) =>
+        summary with { LastWipPushBy = pushed.User, LastWipPushAt = pushed.At };
+
     public static bool ShouldDelete(SessionDeleted _) => true;
 }

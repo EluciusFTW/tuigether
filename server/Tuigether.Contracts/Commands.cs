@@ -44,6 +44,10 @@ public static class CommandRoutes
     public const string ChangeNote = "/api/sessions/change-note";
 
     public const string RemoveNote = "/api/sessions/remove-note";
+
+    public const string ChangeSessionBranch = "/api/sessions/change-session-branch";
+
+    public const string RecordWipPush = "/api/sessions/record-wip-push";
 }
 
 public sealed record CreateSession(string Title, string Repository, string Branch);
@@ -118,3 +122,10 @@ public sealed record AddNote(Guid SessionId, string NoteId, string Text);
 public sealed record ChangeNote(Guid SessionId, string NoteId, string Text);
 
 public sealed record RemoveNote(Guid SessionId, string NoteId);
+
+public sealed record ChangeSessionBranch(Guid SessionId, string Branch);
+
+/// <summary>
+/// Tells the other Clients on the Session branch to pull. The caller pushed its work in progress before.
+/// </summary>
+public sealed record RecordWipPush(Guid SessionId);
