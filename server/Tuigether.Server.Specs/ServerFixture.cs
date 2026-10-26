@@ -29,6 +29,13 @@ public sealed class ServerFixture : IAsyncLifetime
     /// </summary>
     public static readonly TimeSpan LeaveGracePeriod = TimeSpan.FromSeconds(2);
 
+    /// <summary>
+    /// Short, so that a live node has a heartbeat soon after the reset at the start of a spec.
+    /// </summary>
+    public static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(1);
+
+    public static readonly TimeSpan HeartbeatTimeout = TimeSpan.FromSeconds(3);
+
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine").Build();
 
     private IAlbaHost? _host;
@@ -67,6 +74,8 @@ public sealed class ServerFixture : IAsyncLifetime
             .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.ApiKey)}", ApiKey)
             .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.LeaveGracePeriod)}", LeaveGracePeriod.ToString())
             .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.BreakDuration)}", BreakDuration.ToString())
+            .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.HeartbeatInterval)}", HeartbeatInterval.ToString())
+            .WithConfiguration($"{ServerOptions.Section}:{nameof(ServerOptions.HeartbeatTimeout)}", HeartbeatTimeout.ToString())
             .StartAsync();
 
     public async ValueTask DisposeAsync()

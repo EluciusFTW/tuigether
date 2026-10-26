@@ -19,6 +19,16 @@ public sealed record ServerOptions
     /// The length of the Break after a finished or skipped Drive.
     /// </summary>
     public TimeSpan BreakDuration { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// The time between two heartbeats of one node.
+    /// </summary>
+    public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// The age of the last heartbeat after which a node counts as crashed. The sweep then removes its Clients.
+    /// </summary>
+    public TimeSpan HeartbeatTimeout { get; init; } = TimeSpan.FromSeconds(30);
 }
 
 public static class ServerRoutes

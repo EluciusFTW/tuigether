@@ -120,6 +120,9 @@ no-op.
 - The server appends the join, the leave, `SessionStarted` and `SessionFinished` itself. `Sessions.Start` is a no-op,
   and `Presence.Leave` writes nothing else. A User leaves after the grace period of the server (`LeaveGracePeriod`,
   default 10 seconds), when no other Client of the User has the Session open.
+- Each node refreshes a heartbeat every `HeartbeatInterval` (default 10 seconds). A crashed node closes none of its
+  Clients. A sweep every 5 seconds removes the Clients of each node whose heartbeat is older than `HeartbeatTimeout`
+  (default 30 seconds). Their Users then leave as after a clean close, without a grace period.
 - `Driving.RotateDriver`, `PauseDrive` and `ResumeDrive` send their Commands. The server sets `EndsAt` from its own
   clock. The proposed timer gives only the Drive duration. `RotateDriver` carries the Driver that the Client shows, so
   the server rejects the second of two rotations at the same moment.

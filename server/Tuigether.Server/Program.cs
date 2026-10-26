@@ -6,6 +6,7 @@ using Tuigether.Server.Goal;
 using Tuigether.Server.NoteList;
 using Tuigether.Server.Notes;
 using Tuigether.Server.Presence;
+using Tuigether.Server.Presence.Sweep;
 using Tuigether.Server.Sessions;
 using Tuigether.Server.Shared;
 using Tuigether.Server.Shared.Hubs;
@@ -70,6 +71,11 @@ builder.Host.UseWolverine(static options =>
     // Inline: a hub call returns after its handler ran. SignalR runs the calls of one connection one at a time, so
     // the node handles the messages of a Client in their order, for example a close and the next open.
     options.UseSignalR<TuigetherHub>().ProcessInline();
+
+    // ScheduleRecurring registers services too (docs/agents/csharp.md, "Recurring message in a module"). One agent in
+    // the cluster schedules each sweep. A second run of one sweep finds nothing left to remove. Every 5 seconds is the
+    // shortest cadence that Wolverine accepts.
+    options.Schedules.ScheduleRecurring<SweepCrashedNodes>("*/5 * * * * *");
 });
 
 builder.Services

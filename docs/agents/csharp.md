@@ -92,6 +92,10 @@ Known conflicts:
   A call to `UseSignalR` there adds nothing, and the hub fails with "Unable to find the required services". So
   `UseSignalR<TuigetherHub>().ProcessInline()` stays in `UseWolverine` in `Program.cs`.
   `PublishMessage<T>().ToSignalR()` changes only the routing, so it works from a module.
+- **Recurring message in a module.** `options.Schedules.ScheduleRecurring<T>(cron)` also adds services, so it fails
+  in a module with "The service collection cannot be modified because it is read-only". The schedule of
+  `SweepCrashedNodes` therefore stays in `UseWolverine` in `Program.cs`. The routing of the message to its durable
+  queue works from a module. Wolverine refuses a cadence shorter than 5 seconds.
 
 ## Vertical slices
 
@@ -111,8 +115,8 @@ Folder rules:
   `SessionRules.TimeLeft`.
 - A handler holds the decision of its use case. A decision moves into a `*Rules.cs` file when two slices call it, as
   `DrivingRules.StartBreak` does for `SkipDrive` and `FinishDrive`. A one-line check stays inline in each handler.
-  `CheckParticipantLeftRules` is a file of its own, because the sweep of crashed nodes needs the same leave decision
-  as the leave check.
+  The sweep of crashed nodes sends `CheckParticipantLeft`, so the leave check in `Presence/LeaveCheck/` holds the one
+  leave decision, `CheckParticipantLeftRules`.
 - `Shared/<slug>/` holds boilerplate. Each slug names one purpose: `Shared/Hubs/`, `Shared/Requests/`. A file that
   belongs to no group lies loose in `Shared/`: `Result.cs`, `ServerOptions.cs`.
 - The namespace of each file matches its folder.
@@ -145,7 +149,7 @@ Module rules:
   checks, the Marten connection, the schema name, the correlation id, `IntegrateWithWolverine`,
   `UseLightweightSessions`, `AddWolverineHttp`, and in `UseWolverine` the service name, the assembly discovery,
   `AutoApplyTransactions`, the relay of the user name, the durability mode, the polling interval, the
-  `ConcurrencyException` retry and `UseSignalR`.
+  `ConcurrencyException` retry, `UseSignalR` and the recurring schedules.
 
 ## Specs
 

@@ -7,7 +7,7 @@ namespace Tuigether.Server.Presence.LeaveCheck;
 public static class CheckParticipantLeftRules
 {
     /// <summary>
-    /// The events when the grace period after a closed Client of <paramref name="user"/> ends.
+    /// The events of the leave check of <paramref name="user"/>, see <see cref="CheckParticipantLeft"/>.
     /// </summary>
     /// <param name="hasOpenClient">Another Client of the User has the Session open.</param>
     public static ImmutableArray<object> Leave(Session session, string user, bool hasOpenClient, DateTimeOffset now) =>
