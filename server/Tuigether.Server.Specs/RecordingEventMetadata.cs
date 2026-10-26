@@ -5,8 +5,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Tuigether.Server.Specs;
 
-[BobcatFeature("Tracing a Command")]
-public sealed class TracingACommand(ServerFixture server) : ServerSpec(server)
+[BobcatFeature("Recording event metadata")]
+public sealed class RecordingEventMetadata(ServerFixture server) : ServerSpec(server)
 {
     [Fact]
     public async Task a_Command_appends_its_events_with_the_trace_id_of_its_request_and_a_causation_id()
@@ -34,5 +34,16 @@ public sealed class TracingACommand(ServerFixture server) : ServerSpec(server)
         var events = await query.Events.FetchStreamAsync(response.ShouldNotBeNull().SessionId, token: TestContext.Current.CancellationToken);
         events.Select(static e => e.CorrelationId).ShouldBe([traceId.ToHexString()]);
         events.ShouldAllBe(static e => e.CausationId != null);
+    }
+
+    [Fact]
+    public async Task a_Command_appends_its_events_with_the_user_of_its_request()
+    {
+        var response = await WhenPosted<CreateSessionResponse>(new CreateSession("Mob on the timer", "tuigether", "main"), As("ann"));
+
+        ThenResponseIs(201);
+        await using var query = Services.GetRequiredService<IDocumentStore>().QuerySession();
+        var events = await query.Events.FetchStreamAsync(response.ShouldNotBeNull().SessionId, token: TestContext.Current.CancellationToken);
+        events.Select(static e => e.UserName).ShouldBe(["ann"]);
     }
 }

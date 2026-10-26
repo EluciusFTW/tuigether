@@ -56,7 +56,7 @@ Known conflicts:
   that every Command has one way in.
 - **User name of a request.** `RequestCheckMiddleware` makes the user name header the user of the request.
   `EnableRelayOfUserName` in `Program.cs` makes Wolverine copy it to the envelope of each message that an endpoint
-  sends.
+  sends. Marten stores it as the user name of each event that the handler appends.
 - **Bobcat and an invoked handler.** Bobcat counts the events of a message handler that an endpoint invokes as a
   cascade, so `ThenEvents` and `ThenNoEvents` do not see them. A spec of such a Command checks the stream with
   `ThenEventsOn<Session>(id, version, ...)`, as `DrivingASession` does. `ThenEventsOn` reads an archived stream as
@@ -149,10 +149,10 @@ Module rules:
   calls each step itself, in this order: request check, health checks, hub, endpoints. The request check must run
   before the hub and the endpoints.
 - `Program.cs` keeps the host-wide settings: the options validation of `ServerOptions`, `TimeProvider`, the health
-  checks, the Marten connection, the schema name, the correlation and causation ids, `IntegrateWithWolverine`,
-  `UseLightweightSessions`, `AddWolverineHttp`, and in `UseWolverine` the service name, the assembly discovery,
-  `AutoApplyTransactions`, the relay of the user name, the durability mode, the polling interval, the
-  `ConcurrencyException` retry, `UseSignalR` and the recurring schedules.
+  checks, the Marten connection, the schema name, the correlation id, causation id and user name of events,
+  `IntegrateWithWolverine`, `UseLightweightSessions`, `AddWolverineHttp`, and in `UseWolverine` the service name, the
+  assembly discovery, `AutoApplyTransactions`, the relay of the user name, the durability mode, the polling interval,
+  the `ConcurrencyException` retry, `UseSignalR` and the recurring schedules.
 
 ## Specs
 

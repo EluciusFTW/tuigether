@@ -43,6 +43,9 @@ builder.Services
 
         // Wolverine sets it to the id of the message that appended the event.
         options.Events.MetadataConfig.CausationIdEnabled = true;
+
+        // Wolverine sets it to the user of the request, see EnableRelayOfUserName.
+        options.Events.MetadataConfig.UserNameEnabled = true;
     })
     .IntegrateWithWolverine()
     .UseLightweightSessions();
