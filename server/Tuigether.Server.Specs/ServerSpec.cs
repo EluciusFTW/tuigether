@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Alba;
+using JasperFx.Events;
 using Marten;
 using Marten.Events.Archiving;
 using Microsoft.Extensions.DependencyInjection;
@@ -103,6 +104,18 @@ public abstract class ServerSpec(ServerFixture server) : WolverineHttpSpec(serve
     {
         await using var query = Services.GetRequiredService<IDocumentStore>().QuerySession();
         SpecAssert.Check("events in the database", await query.Events.QueryAllRawEvents().Where(static e => e.MaybeArchived()).LongCountAsync(), given);
+    }
+
+    /// <summary>
+    /// The events of the Session stream in their order, also after the delete archived the stream.
+    /// </summary>
+    protected async Task<IReadOnlyList<IEvent>> SessionEventsAsync(Guid sessionId)
+    {
+        await using var query = Services.GetRequiredService<IDocumentStore>().QuerySession();
+        return await query.Events.QueryAllRawEvents()
+            .Where(e => e.StreamId == sessionId && e.MaybeArchived())
+            .OrderBy(static e => e.Version)
+            .ToListAsync(TestContext.Current.CancellationToken);
     }
 
     private static string RouteOf(object command) =>

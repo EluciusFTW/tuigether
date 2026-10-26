@@ -5,8 +5,8 @@ namespace Tuigether.Server.Shared.Masking;
 
 /// <summary>
 /// The masking rules for the personal data in the events: user names and free text.
-/// <c>IDocumentStore.Advanced.ApplyEventDataMasking</c> applies them. The snapshots keep the old values until a rebuild
-/// of their projections. The rules change only the event data. The user name column of each event keeps its value.
+/// <see cref="Sessions.Delete.MaskDeletedSessionHandler"/> applies them to a deleted Session. The rules change only the
+/// event data. The user name column of each event keeps its value.
 /// </summary>
 public static class PersonalDataMasking
 {

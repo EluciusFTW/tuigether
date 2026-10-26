@@ -40,7 +40,10 @@ public static class DeleteSessionHandler
         var user = SessionCommand.UserOf(envelope);
         var now = clock.GetUtcNow();
 
-        // The Archived event makes Marten archive the stream in the same transaction. The events stay for statistics.
-        return SessionCommand.Accept(session, [new SessionDeleted(session.Id, user, now), new Archived("Session deleted")]);
+        // The Archived event makes Marten archive the stream in the same transaction.
+        return SessionCommand.Accept(
+            session,
+            [new SessionDeleted(session.Id, user, now), new Archived("Session deleted")],
+            [new MaskDeletedSession(session.Id)]);
     }
 }

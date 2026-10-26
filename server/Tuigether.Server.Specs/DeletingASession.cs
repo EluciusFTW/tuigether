@@ -1,10 +1,10 @@
 using Alba;
 using JasperFx.Events;
 using Marten;
-using Marten.Events.Archiving;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Tuigether.Server.Domain;
+using Tuigether.Server.Shared.Masking;
 
 namespace Tuigether.Server.Specs;
 
@@ -22,7 +22,8 @@ public sealed class DeletingASession(ServerFixture server) : ServerSpec(server)
         await WhenPosted(new DeleteSession(_sessionId), As("bob"));
 
         ThenResponseIs(204);
-        await ThenTheSessionGained(new SessionDeleted(_sessionId, "bob", ServerFixture.Now), new Archived("Session deleted"));
+        // The tracked request waits for the masking of the deleted Session, see MaskingPersonalData.
+        await ThenTheSessionGained(new SessionDeleted(_sessionId, PersonalDataMasking.Mask, ServerFixture.Now), new Archived("Session deleted"));
         await ThenTheSessionStreamIsArchived();
         await ThenNoReadModel<SessionSummary>(_sessionId);
     }
@@ -76,9 +77,9 @@ public sealed class DeletingASession(ServerFixture server) : ServerSpec(server)
         };
         rotation.ShouldBeOneOf("204", "409 The Session is deleted.");
 
-        var events = await StreamEventsAsync();
-        events.TakeLast(2).Select(static e => e.Data).ToList().ShouldBeEquivalentTo(
-            new List<object> { new SessionDeleted(_sessionId, "bob", ServerFixture.Now), new Archived("Session deleted") });
+        // The masking of the deleted Session can run before or after this read, so the values of the events vary.
+        var events = await SessionEventsAsync(_sessionId);
+        events.TakeLast(2).Select(static e => e.Data.GetType()).ShouldBe([typeof(SessionDeleted), typeof(Archived)]);
     }
 
     [Given("the Session has these events")]
@@ -92,7 +93,7 @@ public sealed class DeletingASession(ServerFixture server) : ServerSpec(server)
     [Then("the Session stream gained exactly these events")]
     internal async Task ThenTheSessionGained(params object[] events)
     {
-        var gained = (await StreamEventsAsync()).Where(e => e.Version > _givenVersion).Select(static e => e.Data).ToList();
+        var gained = (await SessionEventsAsync(_sessionId)).Where(e => e.Version > _givenVersion).Select(static e => e.Data).ToList();
         gained.ShouldBeEquivalentTo(events.ToList());
     }
 
@@ -102,15 +103,6 @@ public sealed class DeletingASession(ServerFixture server) : ServerSpec(server)
         await using var query = Services.GetRequiredService<IDocumentStore>().QuerySession();
         var state = await query.Events.FetchStreamStateAsync(_sessionId);
         SpecAssert.Check("archived", state?.IsArchived, true);
-    }
-
-    private async Task<IReadOnlyList<IEvent>> StreamEventsAsync()
-    {
-        await using var query = Services.GetRequiredService<IDocumentStore>().QuerySession();
-        return await query.Events.QueryAllRawEvents()
-            .Where(e => e.StreamId == _sessionId && e.MaybeArchived())
-            .OrderBy(static e => e.Version)
-            .ToListAsync();
     }
 
     private SessionCreated Created() => new(_sessionId, "Mob on the timer", "tuigether", "main", "ann", ServerFixture.Now);

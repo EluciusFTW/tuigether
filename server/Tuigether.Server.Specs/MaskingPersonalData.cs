@@ -40,19 +40,21 @@ public sealed class MaskingPersonalData(ServerFixture server) : ServerSpec(serve
         }
 
         await WhenActing(
-            "the operator masks the Session stream",
+            "the masking rules run on the Session stream",
             _ => store.Advanced.ApplyEventDataMasking(masking => masking.IncludeStream(_sessionId), token));
 
         ThenTheActSucceeded();
         await using var query = store.QuerySession();
         var masked = await query.Events.FetchStreamAsync(_sessionId, token: token);
         masked
-            .SelectMany(static e => UnmaskedFields(e.Data))
+            .SelectMany(static e => PersonalFields(e.Data))
+            .Where(static field => field.Value == PersonalData)
+            .Select(static field => field.Name)
             .ShouldBeEmpty("These event fields keep their personal data. Add a masking rule, or exempt the field in this spec.");
     }
 
     [Fact]
-    public async Task masking_a_Session_and_rebuilding_its_projections_masks_the_snapshots()
+    public async Task a_delete_masks_the_events_and_the_aggregate_of_the_Session()
     {
         await GivenEvents<Session>(
             _sessionId,
@@ -73,60 +75,29 @@ public sealed class MaskingPersonalData(ServerFixture server) : ServerSpec(serve
                 new WipPushed(_sessionId, "ann", Now),
             ]);
 
-        await WhenActing("the operator masks the Session and rebuilds its projections", _ => MaskAndRebuild(_sessionId));
+        await WhenPosted(new DeleteSession(_sessionId), As("ann"));
 
-        ThenTheActSucceeded();
-        await ThenReadModel<SessionSummary>(
-            _sessionId,
-            new SessionSummary(_sessionId, Mask, SessionStatus.Started, Mask, Mask, Mask, Now, Mask, Now) { Participants = [Mask, Mask] });
-        await ThenReadModel<SessionData>(
-            _sessionId,
-            new SessionData(_sessionId, Mask, SessionStatus.Started, Mask, Mask, Mask, Now, Driver: Mask, Mask, Now));
-        await ThenReadModel<SessionParticipants>(
-            _sessionId,
-            new SessionParticipants(_sessionId) { Participants = [new(Mask, Mask), new(Mask, Mask)] });
-        await ThenReadModel<SessionTimer>(
-            _sessionId,
-            new SessionTimer(_sessionId, TimerPhase.DriveRunning, Mask, Now.AddMinutes(10), TimeSpan.FromMinutes(10)));
-        await ThenReadModel<SessionDriveHistory>(
-            _sessionId,
-            new SessionDriveHistory(_sessionId) { Entries = [new(DriveHistoryKind.Started, Mask, Mask, Now)] });
-        await ThenReadModel<SessionNotes>(_sessionId, new SessionNotes(_sessionId, Mask, Mask));
-        await ThenReadModel<SessionGoal>(_sessionId, new SessionGoal(_sessionId, Mask, Mask));
-        await ThenReadModel<SessionTodos>(_sessionId, new SessionTodos(_sessionId) { Items = [new("t1", Mask, false)] });
-        await ThenReadModel<SessionNoteList>(_sessionId, new SessionNoteList(_sessionId) { Items = [new("n1", Mask)] });
-        await ThenTheSessionAggregateIsMasked();
+        ThenResponseIs(204);
+
+        // The tracked request waits for the masking of the deleted Session.
+        var events = await SessionEventsAsync(_sessionId);
+        events
+            .Where(static e => e.Data.GetType().Assembly == typeof(SessionCreated).Assembly)
+            .SelectMany(static e => PersonalFields(e.Data))
+            .Where(static field => field.Value != Mask)
+            .Select(static field => field.Name)
+            .ShouldBeEmpty("These event fields of the deleted Session keep their personal data.");
+        events.Single(static e => e.Data is SessionDeleted).UserName.ShouldBe(Mask);
+        events.Where(static e => e.UserName is not null).ShouldAllBe(static e => e.UserName == Mask);
+        await ThenTheSessionAggregateHoldsOnlyItsIdAndTheDeletedFlag();
     }
 
-    // A new projection of a Session stream needs its rebuild here, or its snapshot keeps the personal data.
-    private async Task MaskAndRebuild(Guid sessionId)
-    {
-        var token = TestContext.Current.CancellationToken;
-        var advanced = Services.GetRequiredService<IDocumentStore>().Advanced;
-        await advanced.ApplyEventDataMasking(masking => masking.IncludeStream(sessionId), token);
-        await advanced.RebuildSingleStreamAsync<Session>(sessionId, token);
-        await advanced.RebuildSingleStreamAsync<SessionSummary>(sessionId, token);
-        await advanced.RebuildSingleStreamAsync<SessionData>(sessionId, token);
-        await advanced.RebuildSingleStreamAsync<SessionParticipants>(sessionId, token);
-        await advanced.RebuildSingleStreamAsync<SessionTimer>(sessionId, token);
-        await advanced.RebuildSingleStreamAsync<SessionDriveHistory>(sessionId, token);
-        await advanced.RebuildSingleStreamAsync<SessionNotes>(sessionId, token);
-        await advanced.RebuildSingleStreamAsync<SessionGoal>(sessionId, token);
-        await advanced.RebuildSingleStreamAsync<SessionTodos>(sessionId, token);
-        await advanced.RebuildSingleStreamAsync<SessionNoteList>(sessionId, token);
-    }
-
-    [Then("the Session aggregate holds masked values")]
-    internal async Task ThenTheSessionAggregateIsMasked()
+    [Then("the Session aggregate holds only its id and the deleted flag")]
+    internal async Task ThenTheSessionAggregateHoldsOnlyItsIdAndTheDeletedFlag()
     {
         await using var query = Services.GetRequiredService<IDocumentStore>().QuerySession();
-        var session = (await query.LoadAsync<Session>(_sessionId, TestContext.Current.CancellationToken)).ShouldNotBeNull();
-        session.Participants.ShouldBe([Mask, Mask]);
-        session.Driver.ShouldBe(Mask);
-        session.NotesText.ShouldBe(Mask);
-        session.NotesEditLockHolder.ShouldBe(Mask);
-        session.GoalText.ShouldBe(Mask);
-        session.GoalEditLockHolder.ShouldBe(Mask);
+        var session = await query.LoadAsync<Session>(_sessionId, TestContext.Current.CancellationToken);
+        session.ShouldBeEquivalentTo(new Session(_sessionId, IsDeleted: true));
     }
 
     // Each event has the stream id SessionId and the time At. No Command and no snapshot has both.
@@ -153,10 +124,10 @@ public sealed class MaskingPersonalData(ServerFixture server) : ServerSpec(serve
             _ => null,
         };
 
-    private static IEnumerable<string> UnmaskedFields(object data) =>
+    // The string fields of an event that can hold personal data.
+    private static IEnumerable<(string Name, string? Value)> PersonalFields(object data) =>
         data.GetType()
             .GetProperties()
-            .Where(property => property.PropertyType == typeof(string) && !NoPersonalData.Contains(property.Name))
-            .Where(property => (string?)property.GetValue(data) == PersonalData)
-            .Select(property => $"{data.GetType().Name}.{property.Name}");
+            .Where(static property => property.PropertyType == typeof(string) && !NoPersonalData.Contains(property.Name))
+            .Select(property => ($"{data.GetType().Name}.{property.Name}", (string?)property.GetValue(data)));
 }
