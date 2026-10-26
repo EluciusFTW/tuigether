@@ -54,6 +54,8 @@ with `ls .scratch`.
   [`docs/agents/sync.md`](docs/agents/sync.md).
 - **C#** — write, change or review C# code, add a C# project, or use a Critter Stack library:
   [`docs/agents/csharp.md`](docs/agents/csharp.md).
+- **Quality gate** — run `/quality-gate`, or check a branch for unused usings, formatting, warnings or cognitive
+  complexity: [`docs/agents/quality-gate.md`](docs/agents/quality-gate.md).
 
 ## Tripwires
 
