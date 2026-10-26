@@ -107,6 +107,7 @@ public sealed class KeepingTheNoteList(ServerFixture server) : ServerSpec(server
 
         ThenResponseIs(409);
         ThenRefusedWith("The Session is deleted.");
+        await ThenTheDatabaseHoldsOnlyTheGivenEvents(_givenVersion);
     }
 
     [Fact]

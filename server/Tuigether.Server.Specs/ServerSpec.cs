@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using Alba;
 using Marten;
+using Marten.Events.Archiving;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Tuigether.Server.Specs;
@@ -91,6 +92,17 @@ public abstract class ServerSpec(ServerFixture server) : WolverineHttpSpec(serve
     {
         await using var query = Services.GetRequiredService<IDocumentStore>().QuerySession();
         SpecAssert.Check("events in the database", await query.Events.QueryAllRawEvents().CountAsync(), 0);
+    }
+
+    /// <summary>
+    /// The database holds the <paramref name="given"/> events and no other event. A rejected Command appends nothing,
+    /// also to an archived stream, which <c>ThenEventsOn</c> reads as version 0.
+    /// </summary>
+    [Then("the database holds only the given events")]
+    internal async Task ThenTheDatabaseHoldsOnlyTheGivenEvents(long given)
+    {
+        await using var query = Services.GetRequiredService<IDocumentStore>().QuerySession();
+        SpecAssert.Check("events in the database", await query.Events.QueryAllRawEvents().Where(static e => e.MaybeArchived()).LongCountAsync(), given);
     }
 
     private static string RouteOf(object command) =>

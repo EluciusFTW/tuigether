@@ -134,7 +134,7 @@ public sealed class DrivingASession(ServerFixture server) : ServerSpec(server)
         await WhenPosted(new PauseDrive(Guid.CreateVersion7()), As("bob"));
 
         ThenResponseIs(404);
-        ThenNoEvents();
+        await ThenTheDatabaseHoldsNoEvents();
     }
 
     [Fact]

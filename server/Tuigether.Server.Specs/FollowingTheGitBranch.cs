@@ -44,6 +44,7 @@ public sealed class FollowingTheGitBranch(ServerFixture server) : ServerSpec(ser
 
         ThenResponseIs(409);
         ThenRefusedWith("The Session is deleted.");
+        await ThenTheDatabaseHoldsOnlyTheGivenEvents(_givenVersion);
     }
 
     [Fact]

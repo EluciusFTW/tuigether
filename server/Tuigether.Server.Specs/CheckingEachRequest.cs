@@ -15,7 +15,7 @@ public sealed class CheckingEachRequest(ServerFixture server) : ServerSpec(serve
 
         ThenResponseIs(401);
         ThenRefusedWith("The API key is wrong.");
-        ThenNoEvents();
+        await ThenTheDatabaseHoldsNoEvents();
     }
 
     [Fact]
@@ -25,7 +25,7 @@ public sealed class CheckingEachRequest(ServerFixture server) : ServerSpec(serve
 
         ThenResponseIs(400);
         ThenRefusedWith("Update tuigether.");
-        ThenNoEvents();
+        await ThenTheDatabaseHoldsNoEvents();
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public sealed class CheckingEachRequest(ServerFixture server) : ServerSpec(serve
 
         ThenResponseIs(400);
         ThenRefusedWith("The request has no user name.");
-        ThenNoEvents();
+        await ThenTheDatabaseHoldsNoEvents();
     }
 
     [Fact]
