@@ -38,17 +38,21 @@ public sealed record SessionSnapshots(
     /// Session data, because the Client shows the Driver only when the Driver is in its Participants.
     /// </summary>
     public IEnumerable<object> MessagesTo(WebSocketRouting.ILocator clients) =>
-        new object?[]
+        new[]
         {
-            Participants is null ? null : new SignalRMessage<SessionParticipants>(Participants, clients),
-            Data is null ? null : new SignalRMessage<SessionData>(Data, clients),
-            Timer is null ? null : new SignalRMessage<SessionTimer>(Timer, clients),
-            DriveHistory is null ? null : new SignalRMessage<SessionDriveHistory>(DriveHistory, clients),
-            Notes is null ? null : new SignalRMessage<SessionNotes>(Notes, clients),
-            Goal is null ? null : new SignalRMessage<SessionGoal>(Goal, clients),
-            Todos is null ? null : new SignalRMessage<SessionTodos>(Todos, clients),
-            NoteList is null ? null : new SignalRMessage<SessionNoteList>(NoteList, clients),
+            MessageTo(Participants, clients),
+            MessageTo(Data, clients),
+            MessageTo(Timer, clients),
+            MessageTo(DriveHistory, clients),
+            MessageTo(Notes, clients),
+            MessageTo(Goal, clients),
+            MessageTo(Todos, clients),
+            MessageTo(NoteList, clients),
         }.OfType<object>().ToList();
+
+    private static object? MessageTo<TSnapshot>(TSnapshot? snapshot, WebSocketRouting.ILocator clients)
+        where TSnapshot : class =>
+        snapshot is null ? null : new SignalRMessage<TSnapshot>(snapshot, clients);
 }
 
 /// <summary>

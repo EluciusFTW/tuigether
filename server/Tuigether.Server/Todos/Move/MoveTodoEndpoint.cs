@@ -41,7 +41,8 @@ public static class MoveTodoHandler
             return SessionCommand.Reject("The todo does not exist.");
         }
 
-        if (command.NewPosition < 0 || command.NewPosition >= session.Todos.Length)
+        var positionIsInRange = command.NewPosition >= 0 && command.NewPosition < session.Todos.Length;
+        if (!positionIsInRange)
         {
             return SessionCommand.Reject($"The position {command.NewPosition} is not in the range 0 to {session.Todos.Length - 1}.");
         }

@@ -53,21 +53,21 @@ public static class RotateDriverHandler
 
         var user = SessionCommand.UserOf(envelope);
         var now = clock.GetUtcNow();
-        Events events = [];
-
-        switch (session.Timer)
-        {
-            case TimerPhase.DriveRunning or TimerPhase.DrivePaused:
-                events.Add(new DriveSwitched(session.Id, user, now));
-                break;
-            case TimerPhase.Break:
-                events.Add(new BreakSkipped(session.Id, user, now));
-                break;
-        }
-
-        events.Add(new DriverChanged(session.Id, command.NextDriver, user, now));
-        events.Add(new DriveStarted(session.Id, command.NextDriver, now + command.Duration, user, now));
+        Events events =
+        [
+            .. EndTheCurrentPhase(session, user, now),
+            new DriverChanged(session.Id, command.NextDriver, user, now),
+            new DriveStarted(session.Id, command.NextDriver, now + command.Duration, user, now),
+        ];
 
         return SessionCommand.Accept(session, events, DrivingRules.ScheduleEnds(events, now));
     }
+
+    private static object[] EndTheCurrentPhase(Session session, string user, DateTimeOffset now) =>
+        session.Timer switch
+        {
+            TimerPhase.DriveRunning or TimerPhase.DrivePaused => [new DriveSwitched(session.Id, user, now)],
+            TimerPhase.Break => [new BreakSkipped(session.Id, user, now)],
+            _ => [],
+        };
 }

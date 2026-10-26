@@ -17,12 +17,14 @@ public static class FinishDriveHandler
         IOptions<ServerOptions> options,
         TimeProvider clock)
     {
-        if (session is null || session.IsDeleted)
+        if (session is null)
         {
             return ([], null, []);
         }
 
-        if (session.Timer != TimerPhase.DriveRunning || session.DriveEndsAt != finish.EndsAt)
+        var driveRuns = session is { IsDeleted: false, Timer: TimerPhase.DriveRunning };
+        var endIsUnchanged = session.DriveEndsAt == finish.EndsAt;
+        if (!driveRuns || !endIsUnchanged)
         {
             return ([], null, []);
         }

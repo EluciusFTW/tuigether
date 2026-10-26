@@ -12,12 +12,14 @@ public static class EndBreakHandler
         EndBreak end,
         [WriteAggregate(Required = false)] Session? session)
     {
-        if (session is null || session.IsDeleted)
+        if (session is null)
         {
             return ([], null);
         }
 
-        if (session.Timer != TimerPhase.Break || session.BreakEndsAt != end.EndsAt)
+        var breakRuns = session is { IsDeleted: false, Timer: TimerPhase.Break };
+        var endIsUnchanged = session.BreakEndsAt == end.EndsAt;
+        if (!breakRuns || !endIsUnchanged)
         {
             return ([], null);
         }
